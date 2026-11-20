@@ -138,6 +138,8 @@
         <label>模型</label>
         <input id="mt-model">
         <small>預設 gemini-flash-latest；翻得不準可換更強的模型名稱</small>
+        <label>診斷資訊</label>
+        <pre id="mt-diag" style="white-space:pre-wrap;font:12px/1.4 monospace;background:#f4f4f4;padding:8px;border-radius:8px;max-height:30vh;overflow:auto;margin:0"></pre>
         <div class="mt-row">
           <button id="mt-clear">清除快取</button>
           <button id="mt-close">取消</button>
@@ -146,6 +148,7 @@
       </div>`;
     document.documentElement.appendChild(p);
     const $ = (id) => p.querySelector(id);
+    $('#mt-diag').textContent = diagnose();
     $('#mt-key').value = cfg.apiKey;
     $('#mt-lang').value = cfg.targetLang;
     $('#mt-model').value = cfg.model;
@@ -163,6 +166,34 @@
       if (cfg.apiKey && !enabled) setEnabled(true);
     };
   }
+
+  /* ---------------- 診斷 ---------------- */
+  let lastErr = '';
+  function diagnose() {
+    const imgs = [...document.querySelectorAll('img')];
+    const count = (st) => [...states.values()].filter((x) => x.status === st).length;
+    const big = imgs.filter((i) => i.naturalWidth >= cfg.minSize && i.naturalHeight >= cfg.minSize);
+    const lines = [
+      '版本：1.1　網站：' + HOST + '　開啟：' + (enabled ? '是' : '否'),
+      '圖片總數：' + imgs.length + '　大圖：' + big.length + '　符合條件：' + imgs.filter(qualifies).length,
+      '排隊 ' + count('queued') + '／翻譯中 ' + count('running') + '／完成 ' + count('done') + '／錯誤 ' + count('error'),
+      'iframe：' + document.querySelectorAll('iframe').length + '　canvas：' + document.querySelectorAll('canvas').length
+        + '　視窗寬：' + innerWidth,
+      '最近錯誤：' + (lastErr || '無'),
+      '— 畫面附近的圖片 —',
+    ];
+    imgs.filter(isNearView).slice(0, 6).forEach((i) => {
+      const r = i.getBoundingClientRect();
+      const src = (i.currentSrc || i.src || '').slice(0, 70);
+      lines.push(i.naturalWidth + 'x' + i.naturalHeight + ' 顯示' + Math.round(r.width) + 'x' + Math.round(r.height)
+        + (i.complete ? '' : ' 未載完') + (states.has(i) ? ' [' + states.get(i).status + ']' : '') + '\n  ' + src);
+    });
+    return lines.join('\n');
+  }
+  window.addEventListener('error', (e) => {
+    if (String(e.filename || '').indexOf('http') === 0) return; // 只記自己的錯
+    lastErr = String(e.message || e.error);
+  });
 
   /* ---------------- 圖片狀態 ---------------- */
   const states = new Map(); // img -> {status, key, layer, badge, fitW}
@@ -404,6 +435,7 @@
 
   function showError(st, img, err) {
     console.warn('[漫畫翻譯]', err);
+    lastErr = String(err && err.message ? err.message : err);
     if (!st.layer) ensureLayer(st);
     setBadge(st, '⚠️ ' + (err && err.message ? err.message : err) + '（點此重試）', (e) => {
       e.stopPropagation();

@@ -19,7 +19,10 @@ import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
+import android.os.Message;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
+import android.widget.Toast;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -37,7 +40,12 @@ import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
+import java.io.InputStreamReader;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.Set;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -55,6 +63,9 @@ public class MainActivity extends Activity {
     private String injectJs;
     private String userAgent;
 
+    private final Set<String> adHosts = new HashSet<>();
+    private long lastToast = 0;
+
     private final ExecutorService pool = Executors.newFixedThreadPool(4);
     private final Map<String, String> results = new ConcurrentHashMap<>();
 
@@ -64,6 +75,7 @@ public class MainActivity extends Activity {
         prefs = getSharedPreferences("app", MODE_PRIVATE);
         store = getSharedPreferences("gm", MODE_PRIVATE);
         injectJs = buildInjectJs();
+        loadAdHosts();
         buildUi();
 
         String start = urlFromIntent(getIntent());
@@ -155,6 +167,9 @@ public class MainActivity extends Activity {
         s.setDisplayZoomControls(false);
         s.setMediaPlaybackRequiresUserGesture(false);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        // 開新視窗一律先攔下來判斷，擋掉彈出廣告
+        s.setSupportMultipleWindows(true);
+        s.setJavaScriptCanOpenWindowsAutomatically(true);
         // 拿掉 WebView 標記，讓網站當成一般 Chrome
         userAgent = s.getUserAgentString().replace("; wv)", ")");
         s.setUserAgentString(userAgent);
@@ -167,14 +182,38 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                String scheme = request.getUrl().getScheme();
-                if ("http".equals(scheme) || "https".equals(scheme)) return false;
-                // 其他協定（intent:、market: 等）交給系統，失敗就忽略
+                Uri u = request.getUrl();
+                String scheme = u.getScheme() == null ? "" : u.getScheme().toLowerCase();
+                if ("http".equals(scheme) || "https".equals(scheme)) {
+                    if (!request.isForMainFrame()) return false;
+                    String host = u.getHost();
+                    if (isAdHost(host)) { blocked(); return true; }
+                    // 沒有點擊、也不是伺服器轉址，卻自己跳到別的網站 → 多半是廣告
+                    if (!request.hasGesture() && !request.isRedirect()
+                            && !sameSite(host, Uri.parse(String.valueOf(view.getUrl())).getHost())) {
+                        blocked();
+                        return true;
+                    }
+                    return false;
+                }
+                // intent:、market: 常被廣告拿來硬開 Play 商店，直接擋
+                if ("intent".equals(scheme) || "market".equals(scheme) || !request.hasGesture()) {
+                    blocked();
+                    return true;
+                }
                 try {
-                    startActivity(new Intent(Intent.ACTION_VIEW, request.getUrl()));
+                    startActivity(new Intent(Intent.ACTION_VIEW, u));
                 } catch (Exception ignored) {
                 }
                 return true;
+            }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                if (isAdHost(request.getUrl().getHost())) {
+                    return new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream(new byte[0]));
+                }
+                return null;
             }
 
             @Override
@@ -192,11 +231,97 @@ public class MainActivity extends Activity {
 
         web.setWebChromeClient(new WebChromeClient() {
             @Override
+            public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
+                if (!isUserGesture) { blocked(); return false; }
+                // 用一個看不見的暫存視窗接住新網址，再決定要不要開
+                final String currentHost = Uri.parse(String.valueOf(view.getUrl())).getHost();
+                WebView probe = new WebView(MainActivity.this);
+                probe.setWebViewClient(new WebViewClient() {
+                    private boolean handled = false;
+
+                    private void decide(WebView w, String url) {
+                        if (handled || url == null || url.startsWith("about:")) return;
+                        handled = true;
+                        String host = Uri.parse(url).getHost();
+                        if (!isAdHost(host) && sameSite(host, currentHost)) web.loadUrl(url);
+                        else blocked();
+                        w.stopLoading();
+                        w.destroy();
+                    }
+
+                    @Override
+                    public boolean shouldOverrideUrlLoading(WebView w, WebResourceRequest r) {
+                        decide(w, r.getUrl().toString());
+                        return true;
+                    }
+
+                    @Override
+                    public void onPageStarted(WebView w, String url, Bitmap favicon) {
+                        decide(w, url);
+                    }
+                });
+                WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
+                transport.setWebView(probe);
+                resultMsg.sendToTarget();
+                return true;
+            }
+
+            @Override
             public void onProgressChanged(WebView view, int newProgress) {
                 progress.setProgress(newProgress);
                 progress.setVisibility(newProgress >= 100 ? View.INVISIBLE : View.VISIBLE);
                 // 頁面大致載好就先注入，漫畫圖片可以早點開始翻
                 if (newProgress >= 70) view.evaluateJavascript(injectJs, null);
+            }
+        });
+    }
+
+    private void loadAdHosts() {
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(getAssets().open("adhosts.txt"), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = r.readLine()) != null) {
+                line = line.trim().toLowerCase();
+                if (!line.isEmpty() && !line.startsWith("#")) adHosts.add(line);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private boolean isAdHost(String host) {
+        if (host == null) return false;
+        String h = host.toLowerCase();
+        while (true) {
+            if (adHosts.contains(h)) return true;
+            int dot = h.indexOf('.');
+            if (dot < 0) return false;
+            h = h.substring(dot + 1);
+        }
+    }
+
+    // 取網域最後兩段比較（例：www.abc.com 與 img.abc.com 視為同一站）
+    private static String baseDomain(String host) {
+        if (host == null) return "";
+        String[] p = host.toLowerCase().split("\\.");
+        if (p.length <= 2) return host.toLowerCase();
+        String last2 = p[p.length - 2] + "." + p[p.length - 1];
+        // 像 .com.tw、.co.jp 這種要取三段
+        if (p[p.length - 2].length() <= 3 && p[p.length - 1].length() == 2 && p.length >= 3) {
+            return p[p.length - 3] + "." + last2;
+        }
+        return last2;
+    }
+
+    private static boolean sameSite(String a, String b) {
+        if (a == null || b == null) return false;
+        return baseDomain(a).equals(baseDomain(b));
+    }
+
+    private void blocked() {
+        runOnUiThread(() -> {
+            long now = System.currentTimeMillis();
+            if (now - lastToast > 3000) {
+                lastToast = now;
+                Toast.makeText(this, "已擋下廣告", Toast.LENGTH_SHORT).show();
             }
         });
     }

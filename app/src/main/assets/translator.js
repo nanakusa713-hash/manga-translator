@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         漫畫即時翻譯（Gemini）
 // @namespace    manga-translator
-// @version      1.2.0
+// @version      1.3.0
 // @description  自動辨識網頁漫畫圖片中的日文／英文，翻成繁體中文並直接疊在對話框上。滑到哪翻到哪。點右下「譯」開關，長按開設定。
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -16,7 +16,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.2';
+  const VERSION = '1.3';
 
   /* ---------------- 設定 ---------------- */
   const HOST = location.hostname;
@@ -209,6 +209,7 @@
 
   /* ---------------- 診斷 ---------------- */
   let lastErr = '';
+  let lastGemini = '尚未呼叫';
   function diagnose() {
     const imgs = [...document.querySelectorAll('img')];
     const big = imgs.filter((i) => i.naturalWidth >= cfg.minSize && i.naturalHeight >= cfg.minSize);
@@ -220,6 +221,7 @@
       'iframe：' + document.querySelectorAll('iframe').length + '　canvas：' + document.querySelectorAll('canvas').length
         + '　視窗寬：' + innerWidth + '　思考參數：' + cfg.thinkIdx,
       '最近錯誤：' + (lastErr || '無'),
+      '上次 Gemini：' + lastGemini + '　模型：' + cfg.model,
       '— 畫面附近的圖片 —',
     ];
     imgs.filter(isNearView).slice(0, 6).forEach((i) => {
@@ -407,7 +409,7 @@
   function gmPostJson(url, body) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
-        method: 'POST', url, timeout: 90000,
+        method: 'POST', url, timeout: 120000,
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.apiKey },
         data: JSON.stringify(body),
         onload: (r) => resolve(r),
@@ -429,6 +431,7 @@
       const think = THINK_OPTIONS[Math.min(cfg.thinkIdx, THINK_OPTIONS.length - 1)];
       const generationConfig = {
         temperature: 0.2,
+        maxOutputTokens: 4096, // 避免模型鬼打牆一直輸出、拖到逾時
         responseMimeType: 'application/json',
         responseSchema: {
           type: 'ARRAY',
@@ -447,13 +450,29 @@
         contents: [{ parts: [{ inline_data: { mime_type: 'image/jpeg', data: b64 } }, { text: buildPrompt() }] }],
         generationConfig,
       };
-      const r = await gmPostJson(url, body);
+      const t0 = Date.now();
+      let r;
+      try {
+        r = await gmPostJson(url, body);
+      } catch (e) {
+        lastGemini = '失敗 ' + Math.round((Date.now() - t0) / 1000) + ' 秒：' + e.message;
+        if (waits < 1) { waits++; continue; } // 逾時或斷線先自動重試一次
+        throw e;
+      }
+      lastGemini = 'HTTP ' + r.status + '，' + Math.round((Date.now() - t0) / 1000) + ' 秒';
       if (r.status === 200) {
         const data = JSON.parse(r.responseText);
         const parts = (((data.candidates || [])[0] || {}).content || {}).parts || [];
         let txt = parts.filter((p) => !p.thought).map((p) => p.text || '').join('').trim();
         txt = txt.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-        const arr = JSON.parse(txt || '[]');
+        const fin = ((data.candidates || [])[0] || {}).finishReason;
+        if (fin && fin !== 'STOP') lastGemini += '，結束原因 ' + fin;
+        let arr;
+        try { arr = JSON.parse(txt || '[]'); } catch (e) {
+          // 輸出被截斷時，盡量救回已完成的部分
+          const cut = txt.lastIndexOf('}');
+          try { arr = cut > 0 ? JSON.parse(txt.slice(0, cut + 1) + ']') : []; } catch (_) { arr = []; }
+        }
         return Array.isArray(arr) ? arr : [];
       }
       let msg = '';

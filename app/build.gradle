@@ -1,0 +1,43 @@
+plugins {
+    id 'com.android.application'
+}
+
+def runNumber = (System.getenv('GITHUB_RUN_NUMBER') ?: '1') as Integer
+
+android {
+    namespace 'tw.manga.translator'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'tw.manga.translator'
+        minSdk 24
+        targetSdk 34
+        versionCode runNumber
+        versionName "1.0.${runNumber}"
+    }
+
+    // 固定簽章，之後更新新版可以直接覆蓋安裝
+    signingConfigs {
+        fixed {
+            storeFile file('release.keystore')
+            storePassword 'mangatranslator'
+            keyAlias 'manga'
+            keyPassword 'mangatranslator'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.fixed
+        }
+        debug {
+            signingConfig signingConfigs.fixed
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

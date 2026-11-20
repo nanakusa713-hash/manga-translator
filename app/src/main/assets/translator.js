@@ -491,7 +491,21 @@
     seen.add(img);
     io.observe(img);
     maybeShowBtn(img);
+    // 延遲載入：先放 1x1 佔位圖，之後才換成真的漫畫圖，換好時再檢查一次
+    img.addEventListener('load', () => {
+      maybeShowBtn(img);
+      if (enabled && !states.has(img) && isNearView(img)) consider(img);
+    });
   }
+
+  // 保險：定期掃描畫面附近還沒處理的圖片
+  setInterval(() => {
+    if (!enabled) return;
+    document.querySelectorAll('img').forEach((img) => {
+      watchImg(img);
+      if (!states.has(img) && img.complete && img.naturalWidth && isNearView(img)) consider(img);
+    });
+  }, 1500);
 
   function maybeShowBtn(img) {
     if (btn.style.display === 'flex') return;

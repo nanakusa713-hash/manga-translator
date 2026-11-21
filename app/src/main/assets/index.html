@@ -16,7 +16,8 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:15px/1
 #app{display:flex;flex-direction:column;height:100dvh}
 header{display:flex;gap:5px;align-items:center;padding:6px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:nowrap;overflow-x:auto}
 button,.btn{background:#2a2d33;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:0 11px;font:inherit;min-height:44px;min-width:44px;display:inline-flex;align-items:center;justify-content:center;gap:4px;flex:none;cursor:pointer}
-button:disabled{opacity:.35}
+button:disabled{opacity:.4}
+#undo{font-weight:600}
 button.on{background:var(--acc);color:#141414;border-color:var(--acc);font-weight:600}
 button.pri{background:var(--acc);color:#141414;border-color:var(--acc);font-weight:600}
 .sp{flex:1}
@@ -59,10 +60,9 @@ select{background:#2a2d33;color:var(--ink);border:1px solid var(--line);border-r
 <header>
   <label class="btn" for="file">開啟</label>
   <input id="file" type="file" accept="image/*" hidden>
-  <button id="undo" disabled aria-label="復原">↶</button>
-  <button id="redo" disabled aria-label="重做">↷</button>
+  <button id="undo" disabled>↶ 上一步</button>
+  <button id="redo" disabled>↷</button>
   <button id="fit">全圖</button>
-  <button id="z100">1:1</button>
   <button id="cmp" title="按住比較原圖">原圖</button>
   <span class="sp"></span>
   <button id="save" class="pri" disabled>儲存</button>
@@ -199,7 +199,6 @@ new ResizeObserver(resize).observe(stage);
 function fit(){if(!loaded)return;const cw=stage.clientWidth,ch=stage.clientHeight;scale=Math.min(cw/W,ch/H)*.96;tx=(cw-W*scale)/2;ty=(ch-H*scale)/2;req()}
 function zoomAt(s,mx,my){s=Math.max(.02,Math.min(64,s));const ix=(mx-tx)/scale,iy=(my-ty)/scale;scale=s;tx=mx-ix*scale;ty=my-iy*scale;req()}
 $('#fit').onclick=fit;
-$('#z100').onclick=()=>zoomAt(scale>=0.99&&scale<=1.01?4:1,stage.clientWidth/2,stage.clientHeight/2);
 function req(){if(!rq){rq=true;requestAnimationFrame(()=>{rq=false;render()})}}
 function render(){
   const cw=stage.clientWidth,ch=stage.clientHeight;

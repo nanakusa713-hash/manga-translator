@@ -65,6 +65,12 @@ video.mirror{transform:scaleX(-1)}
 #viewer .bar{display:flex;gap:8px;padding:12px 16px calc(env(safe-area-inset-bottom) + 12px)}
 #viewer .bar .btn{margin:0}
 #viewer .tip{text-align:center;color:#aaa;font-size:13px;padding:8px}
+#meterBox{display:none;align-items:center;gap:10px;margin:0 auto 14px;max-width:420px;background:#0008;border-radius:14px;padding:10px 14px;font-size:13px}
+#meterBox.on{display:flex}
+#meter{flex:1;height:10px;border-radius:5px;background:#fff2;position:relative;overflow:hidden}
+#lvl{position:absolute;left:0;top:0;bottom:0;width:0;background:#34c759;transition:width .05s}
+#thr{position:absolute;top:-2px;bottom:-2px;width:3px;background:#ff3b30}
+#sens{width:110px;accent-color:#34c759}
 #toast{position:fixed;left:50%;top:40%;transform:translateX(-50%);background:#000c;padding:12px 20px;border-radius:12px;display:none;font-size:16px}
 @media (prefers-reduced-motion:reduce){.dot{animation:none!important}}
 </style>
@@ -85,6 +91,7 @@ video.mirror{transform:scaleX(-1)}
     <button data-m="clap">拍手/喊聲</button>
     <button data-m="off">手動</button>
   </div>
+  <div id="meterBox"><span>音量</span><div id="meter"><div id="lvl"></div><div id="thr"></div></div><label>靈敏度 <input type="range" id="sens" min="1" max="10" value="6"></label></div>
   <div id="row">
     <button class="side" id="thumb" aria-label="相簿"></button>
     <button id="shutter" aria-label="快門"><i></i></button>
@@ -113,7 +120,8 @@ video.mirror{transform:scaleX(-1)}
     <tr><td>停止、結束</td><td>停止錄影</td></tr>
     <tr><td>切換、自拍、前鏡頭、後鏡頭</td><td>切換鏡頭</td></tr>
   </table>
-  <p><b>拍手/喊聲模式</b>：不需要語音辨識，拍一下手或大聲喊就拍照（倒數 2 秒）。在吵雜或沒網路時最穩。</p>
+  <p><b>拍手/喊聲模式</b>：不需要語音辨識，拍一下手或大聲喊就拍照（倒數 2 秒）。在吵雜或沒網路時最穩。畫面上的綠條是音量，超過紅線就會拍；太難觸發就把「靈敏度」往右調，太容易誤拍就往左調。</p>
+  <p><b>上方顯示「點一下畫面繼續聆聽」</b>：iPhone 有時會暫停語音辨識，點一下畫面任何地方就會恢復。</p>
   <p><b>儲存照片</b>：點左下角縮圖 → 點照片 → 按「儲存/分享」，iPhone 選「儲存影像」，Android 選「相簿」或「下載」。</p>
   <p><b>加到主畫面</b>：iPhone 用 Safari「分享 → 加入主畫面」；Android 用 Chrome「⋮ → 加到主畫面」，就像 App 一樣。</p>
   <button class="btn" id="closeHelp">知道了</button>
@@ -137,18 +145,23 @@ video.mirror{transform:scaleX(-1)}
 {
 const $=id=>document.getElementById(id);
 const v=$('v'),dot=$('dot'),heard=$('heard');
-let stream=null,facing='environment',mode='voice',rec=null,recorder=null,chunks=[],busy=false,shots=[],wantListen=false,audioCtx=null,clapTimer=null,current=null;
+let lastHeard=0,lastKick=0,stream=null,facing='environment',mode='voice',rec=null,recorder=null,recMic=null,chunks=[],busy=false,shots=[],wantListen=false,listening=false,needTap=false,audioCtx=null,clapTimer=null,clapMic=null,current=null,lastFire=0,fired=new Set(),srFails=0;
 
 function toast(t,ms=1400){const e=$('toast');e.textContent=t;e.style.display='block';clearTimeout(e._t);e._t=setTimeout(()=>e.style.display='none',ms)}
 function status(t,cls){heard.textContent=t;dot.className='dot'+(cls?' '+cls:'')}
 
+/* 相機只拿影像；麥克風另外拿，避免跟語音辨識搶（Android 常見問題） */
 async function openCam(){
   if(stream)stream.getTracks().forEach(t=>t.stop());
-  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:1920},height:{ideal:1080}},audio:true});
-  v.srcObject=new MediaStream(stream.getVideoTracks());
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:1920},height:{ideal:1080}},audio:false});
+  v.srcObject=stream;
   v.classList.toggle('mirror',facing==='user');
   await v.play().catch(()=>{});
 }
+function getMic(raw){
+  return navigator.mediaDevices.getUserMedia({audio:raw?{echoCancellation:false,noiseSuppression:false,autoGainControl:false}:true});
+}
+function stopTracks(s){if(s)s.getTracks().forEach(t=>t.stop())}
 
 function flash(){const f=$('flash');f.classList.add('on');setTimeout(()=>f.classList.remove('on'),60)}
 function beep(){try{audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.frequency.value=880;g.gain.value=.08;o.connect(g).connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+.08)}catch(e){}}
@@ -176,73 +189,106 @@ function countdown(n,then){
 }
 function burst(k=5){if(busy)return;busy=true;let i=0;const t=setInterval(()=>{snap();if(++i>=k){clearInterval(t);busy=false}},350)}
 
-function startRec(){
+async function startRec(){
   if(recorder||!stream)return;
   if(!window.MediaRecorder){toast('此瀏覽器不支援錄影');return}
+  try{recMic=await getMic(false)}catch(e){recMic=null}
+  const ms=new MediaStream([...stream.getVideoTracks(),...(recMic?recMic.getAudioTracks():[])]);
   const types=['video/mp4','video/webm;codecs=vp9,opus','video/webm'];
   const type=types.find(t=>MediaRecorder.isTypeSupported&&MediaRecorder.isTypeSupported(t))||'';
   chunks=[];
-  try{recorder=new MediaRecorder(stream,type?{mimeType:type}:{})}catch(e){toast('無法錄影');return}
+  try{recorder=new MediaRecorder(ms,type?{mimeType:type}:{})}catch(e){toast('無法錄影');stopTracks(recMic);return}
   recorder.ondataavailable=e=>e.data.size&&chunks.push(e.data);
-  recorder.onstop=()=>{addShot(new Blob(chunks,{type:recorder.mimeType||'video/mp4'}),'video');recorder=null;$('shutter').classList.remove('recording');refreshStatus()};
-  recorder.start(500);$('shutter').classList.add('recording');status('錄影中…說「停止」結束','rec');
+  recorder.onstop=()=>{addShot(new Blob(chunks,{type:recorder.mimeType||'video/mp4'}),'video');recorder=null;stopTracks(recMic);recMic=null;$('shutter').classList.remove('recording');refreshStatus();kick()};
+  recorder.start(500);$('shutter').classList.add('recording');status('錄影中…說「停止」或按紅色按鈕','rec');
 }
 function stopRec(){if(recorder)recorder.stop()}
 
-async function flip(){facing=facing==='user'?'environment':'user';const r=!!recorder;if(r)stopRec();try{await openCam();toast(facing==='user'?'前鏡頭':'後鏡頭')}catch(e){toast('切換失敗')}}
+async function flip(){facing=facing==='user'?'environment':'user';if(recorder)stopRec();try{await openCam();toast(facing==='user'?'前鏡頭':'後鏡頭')}catch(e){toast('切換失敗')}}
 
 /* ---------- 語音指令 ---------- */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+const CMDS=[
+  [/停止|停下|結束|结束|暫停|停|stop/, ()=>recorder?(stopRec(),true):false],
+  [/錄影|录影|錄像|录像|開始錄|开始录|錄音|record|video/, ()=>(startRec(),true)],
+  [/十秒|10秒|拾秒/, ()=>(countdown(10,snap),true)],
+  [/倒數|倒数|到數|到数|三秒|3秒|timer/, ()=>(countdown(3,snap),true)],
+  [/連拍|连拍|蓮拍|burst/, ()=>(burst(),true)],
+  [/切換|切换|自拍|前鏡頭|前镜头|後鏡頭|后镜头|翻轉|翻转|換鏡頭|换镜头|flip|switch|selfie/, ()=>(flip(),true)],
+  [/拍照|拍|照相|照片|茄子|且子|切子|茄汁|起司|起士|吉士|cheese|chees|咔嚓|喀嚓|卡嚓|卡擦|咖嚓|photo|shoot|snap|picture/, ()=>(snap(),true)]
+];
 function handle(text){
-  const t=text.replace(/\s/g,'').toLowerCase();
-  if(/停止|結束|停|stop/.test(t)){if(recorder){stopRec();return true}}
-  if(/錄影|開始錄|錄像|record/.test(t)){startRec();return true}
-  if(/十秒|10秒/.test(t)){countdown(10,snap);return true}
-  if(/倒數|三秒|3秒|timer/.test(t)){countdown(3,snap);return true}
-  if(/連拍|burst/.test(t)){burst();return true}
-  if(/切換|自拍|前鏡頭|後鏡頭|翻轉|flip|switch/.test(t)){flip();return true}
-  if(/拍照|拍|茄子|起司|cheese|咔嚓|喀嚓|卡擦|photo|shoot|snap/.test(t)){snap();return true}
+  const t=text.replace(/[\s，。,.!?！？]/g,'').toLowerCase();
+  for(const [re,fn] of CMDS)if(re.test(t)&&fn())return true;
   return false;
+}
+function makeRec(){
+  const r=new SR();r.lang='zh-TW';r.continuous=true;r.interimResults=true;r.maxAlternatives=3;
+  r.onstart=()=>{listening=true;srFails=0;needTap=false;fired.clear();refreshStatus()};
+  r.onresult=e=>{
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      if(fired.has(i))continue;
+      const res=e.results[i];
+      const alts=Array.from(res).map(a=>a.transcript);
+      if(!recorder){status('聽到：'+alts[0],'live');lastHeard=Date.now()}
+      if(Date.now()-lastFire<900)continue;
+      if(alts.some(a=>handle(a))){fired.add(i);lastFire=Date.now();break}
+    }
+  };
+  r.onerror=e=>{
+    if(e.error==='not-allowed'||e.error==='service-not-allowed'){
+      srFails++;
+      if(srFails>=3){needTap=true;refreshStatus()}
+    }
+  };
+  r.onend=()=>{listening=false;rec=null;if(wantListen&&mode==='voice')kick()};
+  return r;
+}
+function kick(){
+  if(!wantListen||mode!=='voice'||listening||needTap)return;
+  const wait=700-(Date.now()-lastKick);
+  if(wait>0){clearTimeout(kick._t);kick._t=setTimeout(kick,wait);return}
+  lastKick=Date.now();
+  try{rec=rec||makeRec();rec.start()}catch(e){/* 已在啟動中 */}
 }
 function startVoice(){
   if(!SR){toast('此瀏覽器不支援語音辨識，已改用拍手/喊聲模式',2600);setMode('clap');return}
-  wantListen=true;
-  rec=new SR();rec.lang='zh-TW';rec.continuous=true;rec.interimResults=true;
-  let lastFire=0;
-  rec.onresult=e=>{
-    const r=e.results[e.results.length-1],txt=r[0].transcript;
-    if(!recorder)status('聽到：'+txt,'live');
-    // 中途結果也觸發，反應更快；1.5 秒內不重複
-    if(Date.now()-lastFire>1500&&handle(txt))lastFire=Date.now();
-  };
-  rec.onerror=e=>{if(e.error==='not-allowed'||e.error==='service-not-allowed'){wantListen=false;toast('語音辨識被拒絕，改用拍手/喊聲模式',2600);setMode('clap')}};
-  rec.onend=()=>{if(wantListen&&mode==='voice')setTimeout(()=>{try{rec.start()}catch(e){}},250)};
-  try{rec.start()}catch(e){}
-  refreshStatus();
+  wantListen=true;needTap=false;kick();refreshStatus();
 }
-function stopVoice(){wantListen=false;if(rec){try{rec.abort()}catch(e){}rec=null}}
+function stopVoice(){wantListen=false;listening=false;if(rec){try{rec.abort()}catch(e){}rec=null}}
+/* 看門狗：每 2 秒確認還在聽，沒在聽就重新開始 */
+setInterval(()=>{if(mode==='voice'&&wantListen&&!listening&&!needTap)kick();if(Date.now()-lastHeard>2500)refreshStatus()},2000);
+/* iPhone 有時要求「點一下」才能重新聆聽 */
+document.addEventListener('pointerdown',()=>{if(needTap&&mode==='voice'){needTap=false;srFails=0;rec=null;kick()}},true);
 
 /* ---------- 拍手/喊聲模式（不需語音辨識） ---------- */
-function startClap(){
+async function startClap(){
+  $('meterBox').classList.add('on');
   try{
-    audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();audioCtx.resume();
-    const src=audioCtx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
+    clapMic=await getMic(true);
+    audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();await audioCtx.resume();
+    const src=audioCtx.createMediaStreamSource(clapMic);
     const an=audioCtx.createAnalyser();an.fftSize=1024;src.connect(an);
-    const buf=new Float32Array(an.fftSize);let base=.02,cool=0;
+    const buf=new Float32Array(an.fftSize);let base=.01,cool=0,peak=0;
     clapTimer=setInterval(()=>{
       an.getFloatTimeDomainData(buf);let s=0;for(const x of buf)s+=x*x;const rms=Math.sqrt(s/buf.length);
-      base=base*.97+Math.min(rms,.1)*.03;
-      if(!busy&&!recorder&&Date.now()>cool&&rms>Math.max(.18,base*6)){cool=Date.now()+3500;countdown(2,snap)}
-    },50);
-  }catch(e){toast('無法啟動聲音偵測')}
+      base=base*.98+Math.min(rms,.05)*.02;
+      const sens=+$('sens').value;               // 1（要很大聲）~10（很敏感）
+      const thr=Math.max(.02,(.32-sens*.028))+base*2;
+      peak=Math.max(rms,peak*.85);
+      $('lvl').style.width=Math.min(100,peak/.4*100)+'%';
+      $('thr').style.left=Math.min(98,thr/.4*100)+'%';
+      if(!busy&&!recorder&&Date.now()>cool&&rms>thr){cool=Date.now()+3500;countdown(2,snap)}
+    },40);
+  }catch(e){toast('無法使用麥克風');$('meterBox').classList.remove('on')}
   refreshStatus();
 }
-function stopClap(){clearInterval(clapTimer);clapTimer=null}
+function stopClap(){clearInterval(clapTimer);clapTimer=null;stopTracks(clapMic);clapMic=null;$('meterBox').classList.remove('on')}
 
 function refreshStatus(){
   if(recorder)return status('錄影中…說「停止」結束','rec');
-  if(mode==='voice')status('聆聽中：說「拍照」','live');
-  else if(mode==='clap')status('拍手或大喊就拍照','live');
+  if(mode==='voice'){if(needTap)status('已暫停，點一下畫面繼續聆聽','');else status(listening?'聆聽中：說「拍照」':'重新連線中…',listening?'live':'')}
+  else if(mode==='clap')status('拍手或大喊，綠條超過紅線就拍','live');
   else status('手動模式','');
 }
 function setMode(m){
@@ -272,7 +318,7 @@ async function save(s){
 $('go').onclick=async()=>{
   $('err').textContent='';
   if(!navigator.mediaDevices||!window.isSecureContext){$('err').textContent='需要用 https 網址開啟才能使用相機（見說明）。';return}
-  try{await openCam();$('start').classList.remove('on');setMode(SR?'voice':'clap')}
+  try{await openCam();try{stopTracks(await getMic(false))}catch(e){}$('start').classList.remove('on');setMode(SR?'voice':'clap')}
   catch(e){$('err').textContent='無法開啟相機或麥克風：請到設定允許此網站使用相機與麥克風後重新整理。（'+e.name+'）'}
 };
 $('go2').onclick=$('helpBtn').onclick=()=>$('help').classList.add('on');
@@ -285,7 +331,7 @@ $('grid').onclick=e=>{const i=e.target.dataset.i;if(i!=null)openViewer(+i)};
 $('vBack').onclick=()=>$('viewer').classList.remove('on');
 $('vSave').onclick=()=>current&&save(current);
 document.querySelectorAll('#modes button').forEach(b=>b.onclick=()=>setMode(b.dataset.m));
-document.addEventListener('visibilitychange',()=>{if(document.hidden){stopVoice()}else if(mode==='voice'&&stream){startVoice()}});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){stopVoice();stopClap()}else if(stream){setMode(mode)}});
 }
 </script>
 </body>

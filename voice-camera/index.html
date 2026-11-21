@@ -65,6 +65,12 @@ video.mirror{transform:scaleX(-1)}
 #viewer .bar{display:flex;gap:8px;padding:12px 16px calc(env(safe-area-inset-bottom) + 12px)}
 #viewer .bar .btn{margin:0}
 #viewer .tip{text-align:center;color:#aaa;font-size:13px;padding:8px}
+#lens{display:flex;justify-content:center;gap:10px;margin-bottom:12px}
+#lens:empty{display:none}
+#lens button{width:44px;height:44px;border-radius:50%;background:#0009;color:#fff;border:0;font-size:13px;font-weight:600}
+#lens button.sel{color:#ffd60a;font-size:15px}
+#focus{position:fixed;width:76px;height:76px;border:2px solid #ffd60a;border-radius:4px;opacity:0;pointer-events:none;transform:translate(-50%,-50%) scale(1.35);transition:transform .25s,opacity .25s}
+#focus.on{opacity:1;transform:translate(-50%,-50%) scale(1)}
 #meterBox{display:none;align-items:center;gap:10px;margin:0 auto 14px;max-width:420px;background:#0008;border-radius:14px;padding:10px 14px;font-size:13px}
 #meterBox.on{display:flex}
 #meter{flex:1;height:10px;border-radius:5px;background:#fff2;position:relative;overflow:hidden}
@@ -78,6 +84,7 @@ video.mirror{transform:scaleX(-1)}
 <body>
 <div id="stage"><video id="v" playsinline muted autoplay></video></div>
 <div id="flash"></div>
+<div id="focus"></div>
 <div id="count"></div>
 
 <div id="top">
@@ -91,6 +98,7 @@ video.mirror{transform:scaleX(-1)}
     <button data-m="clap">拍手/喊聲</button>
     <button data-m="off">手動</button>
   </div>
+  <div id="lens"></div>
   <div id="meterBox"><span>音量</span><div id="meter"><div id="lvl"></div><div id="thr"></div></div><label>靈敏度 <input type="range" id="sens" min="1" max="10" value="6"></label></div>
   <div id="row">
     <button class="side" id="thumb" aria-label="相簿"></button>
@@ -118,8 +126,12 @@ video.mirror{transform:scaleX(-1)}
     <tr><td>連拍</td><td>連拍 5 張</td></tr>
     <tr><td>錄影、開始錄</td><td>開始錄影</td></tr>
     <tr><td>停止、結束</td><td>停止錄影</td></tr>
-    <tr><td>切換、自拍、前鏡頭、後鏡頭</td><td>切換鏡頭</td></tr>
+    <tr><td>切換、自拍、前鏡頭、後鏡頭</td><td>切換前後鏡頭</td></tr>
+    <tr><td>廣角、零點六</td><td>切到 0.6x 廣角（手機有支援時）</td></tr>
+    <tr><td>放大、兩倍</td><td>2 倍</td></tr>
+    <tr><td>一倍、正常、縮小</td><td>回到 1 倍</td></tr>
   </table>
+  <p><b>對焦</b>：平常會自動對焦。Android 可以點畫面上想清楚的地方來對焦；iPhone 只能自動對焦。</p>
   <p><b>拍手/喊聲模式</b>：不需要語音辨識，拍一下手或大聲喊就拍照（倒數 2 秒）。在吵雜或沒網路時最穩。畫面上的綠條是音量，超過紅線就會拍；太難觸發就把「靈敏度」往右調，太容易誤拍就往左調。</p>
   <p><b>上方顯示「點一下畫面繼續聆聽」</b>：iPhone 有時會暫停語音辨識，點一下畫面任何地方就會恢復。</p>
   <p><b>儲存照片</b>：點左下角縮圖 → 點照片 → 按「儲存/分享」，iPhone 選「儲存影像」，Android 選「相簿」或「下載」。</p>
@@ -145,19 +157,91 @@ video.mirror{transform:scaleX(-1)}
 {
 const $=id=>document.getElementById(id);
 const v=$('v'),dot=$('dot'),heard=$('heard');
-let lastHeard=0,lastKick=0,stream=null,facing='environment',mode='voice',rec=null,recorder=null,recMic=null,chunks=[],busy=false,shots=[],wantListen=false,listening=false,needTap=false,audioCtx=null,clapTimer=null,clapMic=null,current=null,lastFire=0,fired=new Set(),srFails=0;
+let track=null,caps={},backCams=[],lensSel='1',dz=1,curDev=null,focusTold=false,lastHeard=0,lastKick=0,stream=null,facing='environment',mode='voice',rec=null,recorder=null,recMic=null,chunks=[],busy=false,shots=[],wantListen=false,listening=false,needTap=false,audioCtx=null,clapTimer=null,clapMic=null,current=null,lastFire=0,fired=new Set(),srFails=0;
 
 function toast(t,ms=1400){const e=$('toast');e.textContent=t;e.style.display='block';clearTimeout(e._t);e._t=setTimeout(()=>e.style.display='none',ms)}
 function status(t,cls){heard.textContent=t;dot.className='dot'+(cls?' '+cls:'')}
 
 /* 相機只拿影像；麥克風另外拿，避免跟語音辨識搶（Android 常見問題） */
-async function openCam(){
-  if(stream)stream.getTracks().forEach(t=>t.stop());
-  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:1920},height:{ideal:1080}},audio:false});
-  v.srcObject=stream;
-  v.classList.toggle('mirror',facing==='user');
+async function openCam(devId){
+  stopTracks(stream);
+  const size={width:{ideal:1920},height:{ideal:1080}};
+  stream=await navigator.mediaDevices.getUserMedia({video:devId?{deviceId:{exact:devId},...size}:{facingMode:facing,...size},audio:false});
+  track=stream.getVideoTracks()[0];curDev=devId||null;
+  caps=(track.getCapabilities&&track.getCapabilities())||{};
+  v.srcObject=stream;applyView();
   await v.play().catch(()=>{});
+  if(caps.focusMode&&caps.focusMode.includes('continuous'))track.applyConstraints({advanced:[{focusMode:'continuous'}]}).catch(()=>{});
 }
+function applyView(){v.style.transform=(facing==='user'?'scaleX(-1) ':'')+(dz>1?'scale('+dz+')':'')}
+
+/* ---------- 鏡頭 0.6x / 1x / 2x ---------- */
+const isFront=l=>/front|前|user|facetime|自拍/i.test(l);
+const isUltra=l=>/ultra|超廣角|超广角/i.test(l);
+const isTele=l=>/tele|長焦|长焦|望遠|望远/i.test(l);
+const isVirtual=l=>/dual|triple|雙|双|三/i.test(l);
+const ultraCam=()=>backCams.find(d=>isUltra(d.label)&&!isVirtual(d.label));
+const mainCam=()=>backCams.find(d=>!isUltra(d.label)&&!isTele(d.label)&&!isVirtual(d.label));
+async function buildLens(){
+  try{backCams=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput'&&d.label&&!isFront(d.label))}catch(e){backCams=[]}
+  renderLens();
+}
+function lensOptions(){
+  if(facing==='user')return[];
+  const wide=ultraCam()||(caps.zoom&&caps.zoom.min<1);
+  const o=[];
+  if(wide)o.push(['0.6','.6']);
+  o.push(['1','1x'],['2','2']);
+  if(!wide&&backCams.length>1)o.push(['next','換']);
+  return o;
+}
+function renderLens(){
+  $('lens').innerHTML=lensOptions().map(([k,t])=>`<button data-k="${k}" class="${k===lensSel?'sel':''}" aria-label="${k==='next'?'換下一個鏡頭':k+' 倍'}">${k===lensSel&&k!=='next'?(k==='0.6'?'0.6x':k==='2'?'2x':t):t}</button>`).join('');
+}
+async function setZoom(z){if(caps.zoom)await track.applyConstraints({advanced:[{zoom:z}]}).catch(()=>{})}
+async function setLens(k){
+  if(facing==='user'){toast('前鏡頭不能切換倍率');return}
+  if(recorder){toast('錄影中不能切換');return}
+  const u=ultraCam(),m=mainCam();
+  try{
+    if(k==='0.6'){
+      dz=1;
+      if(u){if(curDev!==u.deviceId)await openCam(u.deviceId)}
+      else if(caps.zoom&&caps.zoom.min<1)await setZoom(Math.max(caps.zoom.min,.6));
+      else{toast('這支手機的瀏覽器沒有開放廣角鏡頭',2400);return}
+    }else if(k==='next'){
+      const i=backCams.findIndex(d=>d.deviceId===curDev),n=(i+1)%backCams.length;
+      dz=1;await openCam(backCams[n].deviceId);toast('鏡頭 '+(n+1)+' / '+backCams.length);
+    }else{
+      const z=+k;
+      if(u&&curDev===u.deviceId)await openCam(m?m.deviceId:null);
+      if(caps.zoom&&caps.zoom.min<=z&&caps.zoom.max>=z){dz=1;await setZoom(z)}
+      else{dz=z;if(caps.zoom)await setZoom(Math.max(caps.zoom.min,1))}
+    }
+  }catch(e){toast('切換鏡頭失敗')}
+  lensSel=k;applyView();renderLens();
+}
+
+/* ---------- 點畫面對焦 ---------- */
+let focusT=null;
+v.addEventListener('click',async e=>{
+  const f=$('focus');f.style.left=e.clientX+'px';f.style.top=e.clientY+'px';
+  f.classList.remove('on');void f.offsetWidth;f.classList.add('on');
+  clearTimeout(f._t);f._t=setTimeout(()=>f.classList.remove('on'),1200);
+  if(!track)return;
+  const r=v.getBoundingClientRect();
+  let x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;
+  if(facing==='user')x=1-x;
+  const adv={};
+  if('pointsOfInterest' in caps)adv.pointsOfInterest=[{x,y}];
+  if(caps.focusMode&&caps.focusMode.includes('single-shot'))adv.focusMode='single-shot';
+  if(Object.keys(adv).length){
+    try{await track.applyConstraints({advanced:[adv]})}catch(err){}
+    clearTimeout(focusT);
+    focusT=setTimeout(()=>{if(caps.focusMode&&caps.focusMode.includes('continuous'))track.applyConstraints({advanced:[{focusMode:'continuous'}]}).catch(()=>{})},8000);
+  }else if(!focusTold){focusTold=true;toast('這支手機會自動對焦',1800)}
+});
+
 function getMic(raw){
   return navigator.mediaDevices.getUserMedia({audio:raw?{echoCancellation:false,noiseSuppression:false,autoGainControl:false}:true});
 }
@@ -171,7 +255,8 @@ function snap(){
   const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;
   const x=c.getContext('2d');
   if(facing==='user'){x.translate(c.width,0);x.scale(-1,1)}
-  x.drawImage(v,0,0);flash();
+  const W=c.width,H=c.height,sw=W/dz,sh=H/dz;
+  x.drawImage(v,(W-sw)/2,(H-sh)/2,sw,sh,0,0,W,H);flash();
   if(navigator.vibrate)navigator.vibrate(40);
   c.toBlob(b=>{addShot(b,'image')},'image/jpeg',.92);
 }
@@ -204,7 +289,7 @@ async function startRec(){
 }
 function stopRec(){if(recorder)recorder.stop()}
 
-async function flip(){facing=facing==='user'?'environment':'user';if(recorder)stopRec();try{await openCam();toast(facing==='user'?'前鏡頭':'後鏡頭')}catch(e){toast('切換失敗')}}
+async function flip(){facing=facing==='user'?'environment':'user';if(recorder)stopRec();dz=1;lensSel='1';try{await openCam();toast(facing==='user'?'前鏡頭':'後鏡頭')}catch(e){toast('切換失敗')}renderLens()}
 
 /* ---------- 語音指令 ---------- */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
@@ -215,6 +300,9 @@ const CMDS=[
   [/倒數|倒数|到數|到数|三秒|3秒|timer/, ()=>(countdown(3,snap),true)],
   [/連拍|连拍|蓮拍|burst/, ()=>(burst(),true)],
   [/切換|切换|自拍|前鏡頭|前镜头|後鏡頭|后镜头|翻轉|翻转|換鏡頭|换镜头|flip|switch|selfie/, ()=>(flip(),true)],
+  [/超廣角|超广角|廣角|广角|光角|0\.6|零點六|零点六|wide/, ()=>(setLens('0.6'),true)],
+  [/放大|兩倍|两倍|二倍|2倍|zoom/, ()=>(setLens('2'),true)],
+  [/縮小|缩小|一倍|1倍|正常|標準|标准/, ()=>(setLens('1'),true)],
   [/拍照|拍|照相|照片|茄子|且子|切子|茄汁|起司|起士|吉士|cheese|chees|咔嚓|喀嚓|卡嚓|卡擦|咖嚓|photo|shoot|snap|picture/, ()=>(snap(),true)]
 ];
 function handle(text){
@@ -318,13 +406,14 @@ async function save(s){
 $('go').onclick=async()=>{
   $('err').textContent='';
   if(!navigator.mediaDevices||!window.isSecureContext){$('err').textContent='需要用 https 網址開啟才能使用相機（見說明）。';return}
-  try{await openCam();try{stopTracks(await getMic(false))}catch(e){}$('start').classList.remove('on');setMode(SR?'voice':'clap')}
+  try{await openCam();try{stopTracks(await getMic(false))}catch(e){}await buildLens();$('start').classList.remove('on');setMode(SR?'voice':'clap')}
   catch(e){$('err').textContent='無法開啟相機或麥克風：請到設定允許此網站使用相機與麥克風後重新整理。（'+e.name+'）'}
 };
 $('go2').onclick=$('helpBtn').onclick=()=>$('help').classList.add('on');
 $('closeHelp').onclick=()=>$('help').classList.remove('on');
 $('shutter').onclick=()=>recorder?stopRec():snap();
 $('flip').onclick=flip;
+$('lens').onclick=e=>{const b=e.target.closest('button');if(b)setLens(b.dataset.k)};
 $('thumb').onclick=openGallery;
 $('closeGal').onclick=()=>$('gallery').classList.remove('on');
 $('grid').onclick=e=>{const i=e.target.dataset.i;if(i!=null)openViewer(+i)};

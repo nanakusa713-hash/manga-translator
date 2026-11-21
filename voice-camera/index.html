@@ -71,6 +71,12 @@ video.mirror{transform:scaleX(-1)}
 #lens button.sel{color:#ffd60a;font-size:15px}
 #focus{position:fixed;width:76px;height:76px;border:2px solid #ffd60a;border-radius:4px;opacity:0;pointer-events:none;transform:translate(-50%,-50%) scale(1.35);transition:transform .25s,opacity .25s}
 #focus.on{opacity:1;transform:translate(-50%,-50%) scale(1)}
+#flashBtn{width:44px;height:44px;border-radius:50%;border:0;background:#0008;color:#fff;display:none;place-items:center;position:relative}
+#flashBtn.show{display:grid}
+#flashBtn svg{width:22px;height:22px}
+#flashBtn.on{color:#ffd60a}
+#flashBtn small{position:absolute;bottom:-14px;left:50%;transform:translateX(-50%);font-size:11px;white-space:nowrap;color:#ffd60a}
+#screenLight{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .15s}
 #meterBox{display:none;align-items:center;gap:10px;margin:0 auto 14px;max-width:420px;background:#0008;border-radius:14px;padding:10px 14px;font-size:13px}
 #meterBox.on{display:flex}
 #meter{flex:1;height:10px;border-radius:5px;background:#fff2;position:relative;overflow:hidden}
@@ -85,11 +91,13 @@ video.mirror{transform:scaleX(-1)}
 <div id="stage"><video id="v" playsinline muted autoplay></video></div>
 <div id="flash"></div>
 <div id="focus"></div>
+<div id="screenLight"></div>
 <div id="count"></div>
 
 <div id="top">
   <div class="pill"><span class="dot" id="dot"></span><span id="heard">準備中…</span></div>
-  <button class="side" id="helpBtn" aria-label="指令說明" style="width:44px;height:44px;background:#0008">?</button>
+  <div style="display:flex;gap:10px"><button id="flashBtn" aria-label="閃光燈"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><small id="flashTxt"></small></button>
+  <button class="side" id="helpBtn" aria-label="指令說明" style="width:44px;height:44px;background:#0008">?</button></div>
 </div>
 
 <div id="bottom">
@@ -127,11 +135,15 @@ video.mirror{transform:scaleX(-1)}
     <tr><td>錄影、開始錄</td><td>開始錄影</td></tr>
     <tr><td>停止、結束</td><td>停止錄影</td></tr>
     <tr><td>切換、自拍、前鏡頭、後鏡頭</td><td>切換前後鏡頭</td></tr>
+    <tr><td>閃光燈、開閃光</td><td>拍照時閃光</td></tr>
+    <tr><td>開燈、手電筒、補光</td><td>燈一直亮著（錄影好用）</td></tr>
+    <tr><td>關閃光、關燈</td><td>關掉閃光燈</td></tr>
     <tr><td>廣角、零點六</td><td>切到 0.6x 廣角（手機有支援時）</td></tr>
     <tr><td>放大、兩倍</td><td>2 倍</td></tr>
     <tr><td>一倍、正常、縮小</td><td>回到 1 倍</td></tr>
   </table>
   <p><b>對焦</b>：平常會自動對焦。Android 可以點畫面上想清楚的地方來對焦；iPhone 只能自動對焦。</p>
+  <p><b>閃光燈</b>：點右上角的閃電，依序切換「關 → 閃光 → 常亮」。用前鏡頭自拍時，會改成螢幕變白來補光。</p>
   <p><b>拍手/喊聲模式</b>：不需要語音辨識，拍一下手或大聲喊就拍照（倒數 2 秒）。在吵雜或沒網路時最穩。畫面上的綠條是音量，超過紅線就會拍；太難觸發就把「靈敏度」往右調，太容易誤拍就往左調。</p>
   <p><b>上方顯示「點一下畫面繼續聆聽」</b>：iPhone 有時會暫停語音辨識，點一下畫面任何地方就會恢復。</p>
   <p><b>儲存照片</b>：點左下角縮圖 → 點照片 → 按「儲存/分享」，iPhone 選「儲存影像」，Android 選「相簿」或「下載」。</p>
@@ -159,7 +171,7 @@ video.mirror{transform:scaleX(-1)}
 {
 const $=id=>document.getElementById(id);
 const v=$('v'),dot=$('dot'),heard=$('heard');
-let track=null,caps={},backCams=[],lensSel='1',dz=1,curDev=null,focusTold=false,lastHeard=0,lastKick=0,stream=null,facing='environment',mode='voice',rec=null,recorder=null,recMic=null,chunks=[],busy=false,shots=[],wantListen=false,listening=false,needTap=false,audioCtx=null,clapTimer=null,clapMic=null,current=null,lastFire=0,fired=new Set(),srFails=0;
+let flashMode='off',track=null,caps={},backCams=[],lensSel='1',dz=1,curDev=null,focusTold=false,lastHeard=0,lastKick=0,stream=null,facing='environment',mode='voice',rec=null,recorder=null,recMic=null,chunks=[],busy=false,shots=[],wantListen=false,listening=false,needTap=false,audioCtx=null,clapTimer=null,clapMic=null,current=null,lastFire=0,fired=new Set(),srFails=0;
 
 function toast(t,ms=1400){const e=$('toast');e.textContent=t;e.style.display='block';clearTimeout(e._t);e._t=setTimeout(()=>e.style.display='none',ms)}
 function status(t,cls){heard.textContent=t;dot.className='dot'+(cls?' '+cls:'')}
@@ -174,6 +186,9 @@ async function openCam(devId){
   v.srcObject=stream;applyView();
   await v.play().catch(()=>{});
   if(caps.focusMode&&caps.focusMode.includes('continuous'))track.applyConstraints({advanced:[{focusMode:'continuous'}]}).catch(()=>{});
+  if(flashMode==='light'){if(hasTorch())torch(true);screenLight(facing==='user')}
+  if(!hasTorch()&&facing!=='user'&&flashMode!=='off')flashMode='off';
+  if(typeof renderFlash==='function')renderFlash();
 }
 function applyView(){v.style.transform=(facing==='user'?'scaleX(-1) ':'')+(dz>1?'scale('+dz+')':'')}
 
@@ -252,7 +267,32 @@ function stopTracks(s){if(s)s.getTracks().forEach(t=>t.stop())}
 function flash(){const f=$('flash');f.classList.add('on');setTimeout(()=>f.classList.remove('on'),60)}
 function beep(){try{audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.frequency.value=880;g.gain.value=.08;o.connect(g).connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+.08)}catch(e){}}
 
-function snap(){
+/* ---------- 閃光燈：off / flash（拍照時）/ light（常亮） ---------- */
+const hasTorch=()=>facing!=='user'&&!!caps.torch;
+function torch(on){if(hasTorch())return track.applyConstraints({advanced:[{torch:on}]}).catch(()=>{});return Promise.resolve()}
+function screenLight(on){$('screenLight').style.opacity=on?'1':'0'}
+function renderFlash(){
+  const b=$('flashBtn');b.classList.toggle('show',hasTorch()||facing==='user');
+  b.classList.toggle('on',flashMode!=='off');
+  $('flashTxt').textContent=flashMode==='flash'?'閃光':flashMode==='light'?'常亮':'';
+}
+async function setFlash(m){
+  if(!hasTorch()&&facing!=='user'){toast('這個鏡頭不支援閃光燈');return}
+  flashMode=m;
+  if(facing!=='user')await torch(m==='light');
+  screenLight(facing==='user'&&m==='light');
+  renderFlash();toast(m==='off'?'閃光燈：關':m==='flash'?'閃光燈：拍照時閃':'閃光燈：常亮');
+}
+function nextFlash(){setFlash(flashMode==='off'?'flash':flashMode==='flash'?'light':'off')}
+
+async function snap(){
+  if(flashMode==='flash'){
+    if(facing==='user'){screenLight(true);await new Promise(r=>setTimeout(r,450));capture();screenLight(false);return}
+    if(hasTorch()){await torch(true);await new Promise(r=>setTimeout(r,700));capture();torch(false);return}
+  }
+  capture();
+}
+function capture(){
   if(!v.videoWidth)return;
   const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;
   const x=c.getContext('2d');
@@ -274,7 +314,14 @@ function countdown(n,then){
   if(busy)return;busy=true;const c=$('count');c.style.display='grid';
   const tick=()=>{if(n<=0){c.style.display='none';busy=false;then();return}c.textContent=n;beep();n--;setTimeout(tick,1000)};tick();
 }
-function burst(k=5){if(busy)return;busy=true;let i=0;const t=setInterval(()=>{snap();if(++i>=k){clearInterval(t);busy=false}},350)}
+async function burst(k=5){
+  if(busy)return;busy=true;
+  const fl=flashMode==='flash';
+  if(fl){if(hasTorch())await torch(true);else if(facing==='user')screenLight(true);await new Promise(r=>setTimeout(r,600))}
+  for(let i=0;i<k;i++){capture();await new Promise(r=>setTimeout(r,350))}
+  if(fl){if(hasTorch())torch(false);screenLight(false)}
+  busy=false;
+}
 
 async function startRec(){
   if(recorder||!stream)return;
@@ -302,6 +349,9 @@ const CMDS=[
   [/倒數|倒数|到數|到数|三秒|3秒|timer/, ()=>(countdown(3,snap),true)],
   [/連拍|连拍|蓮拍|burst/, ()=>(burst(),true)],
   [/切換|切换|自拍|前鏡頭|前镜头|後鏡頭|后镜头|翻轉|翻转|換鏡頭|换镜头|flip|switch|selfie/, ()=>(flip(),true)],
+  [/關閃光|关闪光|關燈|关灯|關掉閃光|关掉闪光|不要閃光|不要闪光|閃光燈關|闪光灯关/, ()=>(setFlash('off'),true)],
+  [/開燈|开灯|手電筒|手电筒|補光|补光|常亮/, ()=>(setFlash('light'),true)],
+  [/閃光|闪光|flash/, ()=>(setFlash('flash'),true)],
   [/超廣角|超广角|廣角|广角|光角|0\.6|零點六|零点六|wide/, ()=>(setLens('0.6'),true)],
   [/放大|兩倍|两倍|二倍|2倍|zoom/, ()=>(setLens('2'),true)],
   [/縮小|缩小|一倍|1倍|正常|標準|标准/, ()=>(setLens('1'),true)],
@@ -419,12 +469,14 @@ $('go2').onclick=$('helpBtn').onclick=async()=>{$('help').classList.add('on');
    '目前：'+(track.label||''),'解析度：'+(st.width||'?')+'x'+(st.height||'?'),
    '縮放範圍：'+(caps.zoom?caps.zoom.min+' ~ '+caps.zoom.max:'不支援'),
    '對焦模式：'+(caps.focusMode?caps.focusMode.join(', '):'不支援'),
+   '閃光燈：'+(caps.torch?'支援':'不支援'),
    '點擊對焦：'+('pointsOfInterest' in caps?'支援':'不支援'),
    '瀏覽器：'+navigator.userAgent].join('\n');
 };
 $('closeHelp').onclick=()=>$('help').classList.remove('on');
 $('shutter').onclick=()=>recorder?stopRec():snap();
 $('flip').onclick=flip;
+$('flashBtn').onclick=nextFlash;
 $('lens').onclick=e=>{const b=e.target.closest('button');if(b)setLens(b.dataset.k)};
 $('thumb').onclick=openGallery;
 $('closeGal').onclick=()=>$('gallery').classList.remove('on');

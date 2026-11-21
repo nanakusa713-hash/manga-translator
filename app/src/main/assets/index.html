@@ -188,7 +188,7 @@ $('#file').onchange=async e=>{
     work=mk(W,H);wctx=work.getContext('2d');wctx.drawImage(orig,0,0);
     strk=mk(W,H);sctx=strk.getContext('2d');
     URL.revokeObjectURL(url);
-    fileName=f.name.replace(/\.[^.]+$/,'')||'image';fileType=f.type==='image/png'?'image/png':'image/jpeg';origMime=f.type;
+    fileName=f.name.replace(/\.[^.]+$/,'')||'image';exifSeg=null;thumbDim=null;if(f.type==='image/jpeg')readExif(f);fileType=f.type==='image/png'?'image/png':'image/jpeg';origMime=f.type;
     undoS=[];redoS=[];undoBytes=0;cloneSrc=null;cloneOff=null;dirty=false;loaded=true;
     $('#empty').style.display='none';$('#save').disabled=false;updUR();fit();updHint();
   };
@@ -334,13 +334,47 @@ cmp.addEventListener('pointerdown',()=>{showOrig=true;req()});
 ['pointerup','pointerleave','pointercancel'].forEach(t=>cmp.addEventListener(t,()=>{showOrig=false;req()}));
 cmp.addEventListener('contextmenu',e=>e.preventDefault());
 
+
+/* ---------- EXIF 保留 ---------- */
+let exifSeg=null,thumbDim=null;
+function tiffIO(b){const le=b[10]===0x49,dv=new DataView(b.buffer,b.byteOffset,b.byteLength),T=10;
+  return{le,T,u16:o=>dv.getUint16(T+o,le),u32:o=>dv.getUint32(T+o,le),w16:(o,v)=>dv.setUint16(T+o,v,le),w32:(o,v)=>dv.setUint32(T+o,v,le),len:b.length-T}}
+function ifdEntries(io,o){const n=io.u16(o),e=[];for(let i=0;i<n;i++){const p=o+2+i*12;e.push({p,tag:io.u16(p),type:io.u16(p+2)})}return{e,next:o+2+n*12}}
+function thumbInfo(b){try{const io=tiffIO(b),i0=ifdEntries(io,io.u32(4)),o1=io.u32(i0.next);if(!o1||o1>=io.len)return null;
+  const i1=ifdEntries(io,o1);let off=0,len=0,lenP=0;for(const x of i1.e){if(x.tag===0x201)off=io.u32(x.p+8);if(x.tag===0x202){len=io.u32(x.p+8);lenP=x.p+8}}
+  if(!off||!len||io.T+off+len>b.length)return null;return{off:io.T+off,len,lenP,nextP:i0.next,io}}catch(e){return null}}
+async function readExif(f){
+  try{const b=new Uint8Array(await f.arrayBuffer());if(b[0]!==0xFF||b[1]!==0xD8)return;let i=2;
+    while(i+4<b.length&&b[i]===0xFF){const m=b[i+1];if(m===0xDA||m===0xD9)break;const L=(b[i+2]<<8)|b[i+3];
+      if(m===0xE1&&b[i+4]===0x45&&b[i+5]===0x78&&b[i+6]===0x69&&b[i+7]===0x66&&b[i+8]===0&&b[i+9]===0){exifSeg=b.slice(i,i+2+L);break}i+=2+L}
+    if(!exifSeg)return;const t=thumbInfo(exifSeg);
+    if(t){const bm=await createImageBitmap(new Blob([exifSeg.slice(t.off,t.off+t.len)],{type:'image/jpeg'}),{imageOrientation:'none'});thumbDim=[bm.width,bm.height];bm.close&&bm.close()}
+  }catch(e){exifSeg=null}}
+const toBlobP=(c,t,q)=>new Promise(r=>c.toBlob(r,t,q));
+async function withExif(blob){
+  if(!exifSeg)return blob;
+  try{const seg=exifSeg.slice(),io=tiffIO(seg),i0=ifdEntries(io,io.u32(4));let exO=0;
+    for(const x of i0.e){if(x.tag===0x112&&x.type===3)io.w16(x.p+8,1);if(x.tag===0x8769)exO=io.u32(x.p+8)}
+    if(exO&&exO<io.len){for(const x of ifdEntries(io,exO).e){const v=x.tag===0xA002?W:x.tag===0xA003?H:-1;if(v<0)continue;if(x.type===3)io.w16(x.p+8,Math.min(v,65535));else if(x.type===4)io.w32(x.p+8,v)}}
+    const t=thumbInfo(seg);
+    if(t){let tb=null;
+      if(thumbDim){let[tw,th]=thumbDim;if((tw>th)!==(W>H)&&tw!==th)[tw,th]=[th,tw];
+        const c=mk(tw,th),cx=c.getContext('2d');cx.fillStyle='#000';cx.fillRect(0,0,tw,th);const k=Math.min(tw/W,th/H),dw=W*k,dh=H*k;cx.imageSmoothingQuality='high';cx.drawImage(work,(tw-dw)/2,(th-dh)/2,dw,dh);
+        for(const q of [.9,.8,.7,.6,.5,.4,.3]){const b=new Uint8Array(await (await toBlobP(c,'image/jpeg',q)).arrayBuffer());if(b.length<=t.len){tb=b;break}}}
+      seg.fill(0,t.off,t.off+t.len);
+      if(tb){seg.set(tb,t.off);t.io.w32(t.lenP,tb.length)}else t.io.w32(t.nextP,0)}
+    const n=new Uint8Array(await blob.arrayBuffer());let i=2;
+    if(n[2]===0xFF&&n[3]===0xE0)i=4+((n[4]<<8)|n[5]);
+    return new Blob([n.subarray(0,2),seg,n.subarray(i)],{type:'image/jpeg'});
+  }catch(e){return blob}}
+
 /* ---------- 儲存 ---------- */
 let blob=null,prevUrl=null;
 function mkBlob(){
   const t=$('#fmt').value;$('#qRow').style.display=t==='image/jpeg'?'':'none';$('#dl').disabled=true;
   const ext=t==='image/png'?'.png':'.jpg';$('#fname').value=$('#fname').value.replace(/\.(jpe?g|png)$/i,'')+ext;
-  work.toBlob(b=>{blob=b;if(prevUrl)URL.revokeObjectURL(prevUrl);prevUrl=URL.createObjectURL(b);$('#prev').src=prevUrl;
-    $('#info').textContent=W+' × '+H+' 像素（與原圖相同）· '+(b.size/1048576).toFixed(2)+' MB';$('#dl').disabled=false},t,+$('#q').value/100);
+  work.toBlob(async b0=>{const b=t==='image/jpeg'?await withExif(b0):b0;blob=b;if(prevUrl)URL.revokeObjectURL(prevUrl);prevUrl=URL.createObjectURL(b);$('#prev').src=prevUrl;
+    $('#info').textContent=W+' × '+H+' 像素（與原圖相同）· '+(b.size/1048576).toFixed(2)+' MB'+(t==='image/jpeg'&&exifSeg?' · 保留原拍攝資訊':'');$('#dl').disabled=false},t,+$('#q').value/100);
 }
 $('#save').onclick=()=>{$('#fmt').value=fileType;$('#fname').value=fileName;$('#dlg').classList.add('show');mkBlob();
   let can=false;try{can=!!(window.AndroidBridge&&AndroidBridge.canOverwrite()&&(origMime==='image/jpeg'||origMime==='image/png'))}catch(e){}
@@ -350,7 +384,7 @@ window.__overwriteDone=r=>{$('#ow').disabled=false;resetOw();if(r==='ok'){dirty=
 $('#ow').onclick=()=>{
   if(!owArmed){owArmed=true;$('#ow').textContent='確定覆蓋？再按一次';clearTimeout(resetOw.t);resetOw.t=setTimeout(resetOw,4000);return}
   clearTimeout(resetOw.t);$('#ow').disabled=true;$('#ow').textContent='覆蓋中…';
-  work.toBlob(b=>{const fr=new FileReader();fr.onload=()=>{let r;try{r=AndroidBridge.overwrite(String(fr.result).split(',')[1])}catch(e){r='覆蓋失敗：'+e.message}
+  work.toBlob(async b0=>{const b=origMime==='image/jpeg'?await withExif(b0):b0;const fr=new FileReader();fr.onload=()=>{let r;try{r=AndroidBridge.overwrite(String(fr.result).split(',')[1])}catch(e){r='覆蓋失敗：'+e.message}
     if(r!=='pending')window.__overwriteDone(r)};fr.readAsDataURL(b)},origMime,+$('#q').value/100)};
 $('#fmt').onchange=mkBlob;$('#q').oninput=()=>{$('#qO').textContent=$('#q').value};$('#q').onchange=mkBlob;
 $('#close').onclick=()=>$('#dlg').classList.remove('show');

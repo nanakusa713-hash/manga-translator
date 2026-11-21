@@ -121,6 +121,8 @@ select{background:#2a2d33;color:var(--ink);border:1px solid var(--line);border-r
       <button id="close" style="flex:1">返回修改</button>
     </div>
     <div class="note" id="saveNote">存到相簿的「Pictures/無痕修圖」資料夾。</div>
+    <button id="ow" style="display:none;width:100%;border-color:#c0392b;color:#ff8a80">覆蓋原檔</button>
+    <div class="note" id="owNote" style="display:none">覆蓋後原圖無法復原，且會用原本的格式（品質依上方設定）儲存。</div>
   </div>
 </div>
 <div id="toast"></div>
@@ -133,7 +135,7 @@ const mk=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;r
 let W=0,H=0,orig,work,wctx,strk,sctx,snap,snapctx,octx;
 let scale=1,tx=0,ty=0,dpr=1;
 let tool='brush',color='#d23c3c',size=14,hard=.5,opacity=1,sampleN=3;
-let loaded=false,dirty=false,fileName='image',fileType='image/jpeg',showOrig=false;
+let loaded=false,dirty=false,fileName='image',fileType='image/jpeg',origMime='',showOrig=false;
 let undoS=[],redoS=[],undoBytes=0;
 let cloneSrc=null,cloneOff=null,settingSrc=false;
 let act=null,gesture=null,cursor=null,rq=false;
@@ -186,7 +188,7 @@ $('#file').onchange=async e=>{
     work=mk(W,H);wctx=work.getContext('2d');wctx.drawImage(orig,0,0);
     strk=mk(W,H);sctx=strk.getContext('2d');
     URL.revokeObjectURL(url);
-    fileName=f.name.replace(/\.[^.]+$/,'')||'image';fileType=f.type==='image/png'?'image/png':'image/jpeg';
+    fileName=f.name.replace(/\.[^.]+$/,'')||'image';fileType=f.type==='image/png'?'image/png':'image/jpeg';origMime=f.type;
     undoS=[];redoS=[];undoBytes=0;cloneSrc=null;cloneOff=null;dirty=false;loaded=true;
     $('#empty').style.display='none';$('#save').disabled=false;updUR();fit();updHint();
   };
@@ -340,7 +342,16 @@ function mkBlob(){
   work.toBlob(b=>{blob=b;if(prevUrl)URL.revokeObjectURL(prevUrl);prevUrl=URL.createObjectURL(b);$('#prev').src=prevUrl;
     $('#info').textContent=W+' × '+H+' 像素（與原圖相同）· '+(b.size/1048576).toFixed(2)+' MB';$('#dl').disabled=false},t,+$('#q').value/100);
 }
-$('#save').onclick=()=>{$('#fmt').value=fileType;$('#fname').value=fileName;$('#dlg').classList.add('show');mkBlob()};
+$('#save').onclick=()=>{$('#fmt').value=fileType;$('#fname').value=fileName;$('#dlg').classList.add('show');mkBlob();
+  let can=false;try{can=!!(window.AndroidBridge&&AndroidBridge.canOverwrite()&&(origMime==='image/jpeg'||origMime==='image/png'))}catch(e){}
+  $('#ow').style.display=$('#owNote').style.display=can?'':'none';resetOw()};
+let owArmed=false;function resetOw(){owArmed=false;$('#ow').textContent='覆蓋原檔';$('#ow').disabled=false}
+window.__overwriteDone=r=>{$('#ow').disabled=false;resetOw();if(r==='ok'){dirty=false;toast('已覆蓋原檔');$('#dlg').classList.remove('show')}else toast(r)};
+$('#ow').onclick=()=>{
+  if(!owArmed){owArmed=true;$('#ow').textContent='確定覆蓋？再按一次';clearTimeout(resetOw.t);resetOw.t=setTimeout(resetOw,4000);return}
+  clearTimeout(resetOw.t);$('#ow').disabled=true;$('#ow').textContent='覆蓋中…';
+  work.toBlob(b=>{const fr=new FileReader();fr.onload=()=>{let r;try{r=AndroidBridge.overwrite(String(fr.result).split(',')[1])}catch(e){r='覆蓋失敗：'+e.message}
+    if(r!=='pending')window.__overwriteDone(r)};fr.readAsDataURL(b)},origMime,+$('#q').value/100)};
 $('#fmt').onchange=mkBlob;$('#q').oninput=()=>{$('#qO').textContent=$('#q').value};$('#q').onchange=mkBlob;
 $('#close').onclick=()=>$('#dlg').classList.remove('show');
 let downloads=null;

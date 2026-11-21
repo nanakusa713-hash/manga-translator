@@ -280,7 +280,7 @@ function renderFlash(){
 async function setFlash(m){
   if(facing!=='user'&&!hasTorch()&&m!=='off'){
     // 有些手機一開始沒回報，直接試開一次
-    try{await track.applyConstraints({advanced:[{torch:true}]});const st=track.getSettings?track.getSettings():{};torchOK=st.torch===true}catch(e){torchOK=false}
+    try{await track.applyConstraints({advanced:[{torch:true}]});const st=track.getSettings?track.getSettings():{};torchOK=st.torch===true||/iPhone|iPad|iPod/.test(navigator.userAgent)}catch(e){torchOK=false}
     if(!torchOK){try{await track.applyConstraints({advanced:[{torch:false}]})}catch(e){}toast('Chrome 沒開放這支手機的閃光燈',2600);flashMode='off';renderFlash();return}
     if(m==='flash')await torch(false);
   }

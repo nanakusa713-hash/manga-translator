@@ -94,6 +94,7 @@ select{background:#2a2d33;color:var(--ink);border:1px solid var(--line);border-r
     <div class="row" id="ctxRow">
       <div class="sl" id="opRow"><label>不透明</label><input id="op" type="range" min="5" max="100" value="100"><output id="opO">100</output></div>
       <button id="setSrc">設定來源</button>
+      <button id="rotL" aria-label="向左轉 90 度">⟲ 左轉</button><button id="rotR" aria-label="向右轉 90 度">⟳ 右轉</button>
       <select id="sample" aria-label="取樣範圍"><option value="1">取樣 1 點</option><option value="3" selected>取樣 3×3 平均</option><option value="5">取樣 5×5 平均</option></select>
     </div>
     <div class="row" id="colors">
@@ -298,10 +299,18 @@ function pick(p,s){
 }
 
 /* ---------- 復原 ---------- */
-function pushUndo(e){undoS.push(e);undoBytes+=e.d.data.length;while(undoS.length>1&&(undoBytes>250e6||undoS.length>60)){undoBytes-=undoS.shift().d.data.length}}
-function swap(from,to){const e=from.pop();if(!e)return;const cur={x:e.x,y:e.y,d:wctx.getImageData(e.x,e.y,e.d.width,e.d.height)};wctx.putImageData(e.d,e.x,e.y);to.push(cur);dirty=true;updUR();req()}
-$('#undo').onclick=()=>{const e=undoS[undoS.length-1];if(e)undoBytes-=e.d.data.length;swap(undoS,redoS)};
-$('#redo').onclick=()=>{const e=redoS[redoS.length-1];if(e)undoBytes+=e.d.data.length;swap(redoS,undoS)};
+function pushUndo(e){undoS.push(e);undoBytes+=eBytes(e);while(undoS.length>1&&(undoBytes>250e6||undoS.length>60)){undoBytes-=eBytes(undoS.shift())}}
+function rotCanvas(c,dir){const n=mk(c.height,c.width),x=n.getContext('2d');if(dir>0){x.translate(n.width,0);x.rotate(Math.PI/2)}else{x.translate(0,n.height);x.rotate(-Math.PI/2)}x.drawImage(c,0,0);return n}
+function applyRot(dir){work=rotCanvas(work,dir);wctx=work.getContext('2d');orig=rotCanvas(orig,dir);octx=orig.getContext('2d');const t=W;W=H;H=t;
+  strk=mk(W,H);sctx=strk.getContext('2d');cloneSrc=null;cloneOff=null;dirty=true;fit();updHint()}
+function rotate(dir){if(!loaded||act)return;applyRot(dir);undoS.push({rot:dir});redoS=[];updUR();toast(dir>0?'已向右轉 90°':'已向左轉 90°')}
+const eBytes=e=>e&&e.d?e.d.data.length:0;
+function swap(from,to,isUndo){const e=from.pop();if(!e)return;
+  if(e.rot){applyRot(isUndo?-e.rot:e.rot);to.push(e);updUR();return}
+  const cur={x:e.x,y:e.y,d:wctx.getImageData(e.x,e.y,e.d.width,e.d.height)};wctx.putImageData(e.d,e.x,e.y);to.push(cur);dirty=true;updUR();req()}
+$('#undo').onclick=()=>{undoBytes-=eBytes(undoS[undoS.length-1]);swap(undoS,redoS,true)};
+$('#redo').onclick=()=>{undoBytes+=eBytes(redoS[redoS.length-1]);swap(redoS,undoS,false)};
+$('#rotL').onclick=()=>rotate(-1);$('#rotR').onclick=()=>rotate(1);
 function updUR(){$('#undo').disabled=!undoS.length;$('#redo').disabled=!redoS.length}
 
 /* ---------- 手勢 ---------- */

@@ -56,6 +56,20 @@ video.mirror{transform:scaleX(-1)}
 #gallery{position:fixed;inset:0;background:#000;display:none;overflow:auto;padding:calc(env(safe-area-inset-top) + 16px) 12px 40px}
 #gallery header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding:0 4px}
 #gallery header button{background:none;border:0;color:#0a84ff;font-size:17px;min-height:44px}
+#gallery .acts{display:flex;gap:4px;align-items:center}
+.cell{position:relative}
+.cell .chk{position:absolute;right:6px;bottom:6px;width:24px;height:24px;border-radius:50%;border:2px solid #fff;background:#0004;display:none;place-items:center;font-size:14px;font-weight:700;color:#fff}
+.selecting .cell .chk{display:grid}
+.cell.sel .chk{background:#0a84ff;border-color:#0a84ff}
+.cell.sel img,.cell.sel video{opacity:.75}
+.cell .vtag{position:absolute;left:6px;bottom:6px;font-size:11px;background:#0008;padding:1px 6px;border-radius:6px}
+#selBar{position:fixed;left:0;right:0;bottom:0;display:none;gap:10px;align-items:center;padding:12px 16px calc(env(safe-area-inset-bottom) + 12px);background:#111;border-top:1px solid #fff2}
+#selBar.on{display:flex}
+#selBar span{flex:1;color:#ccc}
+#selBar button{border:0;border-radius:12px;padding:12px 18px;font-size:16px;font-weight:600;min-height:44px}
+#delBtn{background:#fff2;color:#ff453a}
+#saveSel{background:#0a84ff;color:#fff}
+#saveSel:disabled,#delBtn:disabled{opacity:.4}
 #grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:4px}
 #grid img,#grid video{width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px}
 #viewer{position:fixed;inset:0;background:#000;display:none;flex-direction:column}
@@ -146,7 +160,8 @@ video.mirror{transform:scaleX(-1)}
   <p><b>閃光燈</b>：點右上角的閃電，依序切換「關 → 閃光 → 常亮」。用前鏡頭自拍時，會改成螢幕變白來補光。</p>
   <p><b>拍手/喊聲模式</b>：不需要語音辨識，拍一下手或大聲喊就拍照（倒數 2 秒）。在吵雜或沒網路時最穩。畫面上的綠條是音量，超過紅線就會拍；太難觸發就把「靈敏度」往右調，太容易誤拍就往左調。</p>
   <p><b>上方顯示「點一下畫面繼續聆聽」</b>：iPhone 有時會暫停語音辨識，點一下畫面任何地方就會恢復。</p>
-  <p><b>儲存照片</b>：點左下角縮圖 → 點照片 → 按「儲存/分享」，iPhone 選「儲存影像」，Android 選「相簿」或「下載」。</p>
+  <p><b>一次存很多張</b>：點左下角縮圖 → 右上角「選取」→ 點要的照片或按「全選」→ 按「儲存」。iPhone 選「儲存 N 張影像」就會進「照片」。</p>
+  <p><b>儲存單張</b>：點左下角縮圖 → 點照片 → 按「儲存/分享」，iPhone 選「儲存影像」，Android 選「相簿」或「下載」。</p>
   <p><b>加到主畫面</b>：iPhone 用 Safari「分享 → 加入主畫面」；Android 用 Chrome「⋮ → 加到主畫面」，就像 App 一樣。</p>
   <p><b>鏡頭資訊</b>（有問題時截這段給我）</p>
   <pre id="diag" style="white-space:pre-wrap;font-size:13px;color:#ccc;background:#fff1;border-radius:10px;padding:12px">開始使用相機後才會顯示</pre>
@@ -154,9 +169,11 @@ video.mirror{transform:scaleX(-1)}
 </div>
 
 <div id="gallery">
-  <header><b style="font-size:20px">本次拍攝</b><button id="closeGal">完成</button></header>
+  <header><b style="font-size:20px">本次拍攝</b><div class="acts"><button id="allBtn" style="display:none">全選</button><button id="selBtn">選取</button><button id="closeGal">完成</button></div></header>
   <div id="grid"></div>
   <p id="empty" style="color:#888;padding:40px 4px;text-align:center">還沒有照片</p>
+  <div style="height:90px"></div>
+  <div id="selBar"><span id="selCount">已選 0 張</span><button id="delBtn">刪除</button><button id="saveSel">儲存</button></div>
 </div>
 
 <div id="viewer">
@@ -445,9 +462,39 @@ function setMode(m){
 }
 
 /* ---------- 相簿 ---------- */
-function openGallery(){
-  $('grid').innerHTML=shots.map((s,i)=>s.kind==='image'?`<img data-i="${i}" src="${s.url}">`:`<video data-i="${i}" src="${s.url}" muted playsinline></video>`).join('');
-  $('empty').style.display=shots.length?'none':'block';$('gallery').classList.add('on');
+let selecting=false,picked=new Set();
+function renderGrid(){
+  $('grid').innerHTML=shots.map((x,i)=>`<div class="cell${picked.has(i)?' sel':''}" data-i="${i}">${x.kind==='image'?`<img src="${x.url}" alt="">`:`<video src="${x.url}" muted playsinline></video><span class="vtag">影片</span>`}<span class="chk">${picked.has(i)?'✓':''}</span></div>`).join('');
+  $('empty').style.display=shots.length?'none':'block';
+  $('gallery').classList.toggle('selecting',selecting);
+  $('selBtn').textContent=selecting?'取消':'選取';
+  $('selBtn').style.display=shots.length?'':'none';
+  $('allBtn').style.display=selecting?'':'none';
+  $('allBtn').textContent=picked.size===shots.length&&shots.length?'全不選':'全選';
+  $('closeGal').style.display=selecting?'none':'';
+  $('selBar').classList.toggle('on',selecting);
+  $('selCount').textContent='已選 '+picked.size+' 張';
+  $('saveSel').disabled=$('delBtn').disabled=!picked.size;
+}
+function openGallery(){selecting=false;picked.clear();renderGrid();$('gallery').classList.add('on')}
+function updateThumb(){
+  const x=shots[0];
+  $('thumb').innerHTML=!x?'':x.kind==='image'?`<img src="${x.url}" alt="">`:`<video src="${x.url}" muted playsinline></video>`;
+}
+async function saveMany(list){
+  const files=list.map(x=>new File([x.blob],x.name,{type:x.blob.type}));
+  if(navigator.canShare&&navigator.canShare({files})){
+    try{await navigator.share({files});return true}catch(e){if(e.name==='AbortError')return false}
+  }
+  for(const x of list){const a=document.createElement('a');a.href=x.url;a.download=x.name;document.body.appendChild(a);a.click();a.remove();await new Promise(r=>setTimeout(r,400))}
+  return true;
+}
+let delArmed=false;
+function deletePicked(){
+  if(!delArmed){delArmed=true;$('delBtn').textContent='確定刪除？';setTimeout(()=>{delArmed=false;$('delBtn').textContent='刪除'},3000);return}
+  delArmed=false;$('delBtn').textContent='刪除';
+  const keep=[];shots.forEach((x,i)=>{if(picked.has(i))URL.revokeObjectURL(x.url);else keep.push(x)});
+  const n=picked.size;shots=keep;picked.clear();selecting=false;renderGrid();updateThumb();toast('已刪除 '+n+' 張');
 }
 function openViewer(i){
   current=shots[i];
@@ -486,7 +533,14 @@ $('flashBtn').onclick=nextFlash;
 $('lens').onclick=e=>{const b=e.target.closest('button');if(b)setLens(b.dataset.k)};
 $('thumb').onclick=openGallery;
 $('closeGal').onclick=()=>$('gallery').classList.remove('on');
-$('grid').onclick=e=>{const i=e.target.dataset.i;if(i!=null)openViewer(+i)};
+$('grid').onclick=e=>{
+  const c=e.target.closest('.cell');if(!c)return;const i=+c.dataset.i;
+  if(selecting){picked.has(i)?picked.delete(i):picked.add(i);renderGrid()}else openViewer(i);
+};
+$('selBtn').onclick=()=>{selecting=!selecting;picked.clear();renderGrid()};
+$('allBtn').onclick=()=>{if(picked.size===shots.length)picked.clear();else shots.forEach((_,i)=>picked.add(i));renderGrid()};
+$('saveSel').onclick=async()=>{const list=[...picked].sort((a,b)=>a-b).map(i=>shots[i]);if(await saveMany(list)){selecting=false;picked.clear();renderGrid()}};
+$('delBtn').onclick=deletePicked;
 $('vBack').onclick=()=>$('viewer').classList.remove('on');
 $('vSave').onclick=()=>current&&save(current);
 document.querySelectorAll('#modes button').forEach(b=>b.onclick=()=>setMode(b.dataset.m));

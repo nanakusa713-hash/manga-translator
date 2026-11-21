@@ -184,7 +184,7 @@ $('#file').onchange=async e=>{
     const maxPx=24e6;if(w*h>maxPx){const k=Math.sqrt(maxPx/(w*h));w=Math.floor(w*k);h=Math.floor(h*k);toast('圖片過大，已縮為 '+w+'×'+h)}
     W=w;H=h;orig=mk(W,H);octx=orig.getContext('2d');octx.drawImage(img,0,0,W,H);
     work=mk(W,H);wctx=work.getContext('2d');wctx.drawImage(orig,0,0);
-    strk=mk(W,H);sctx=strk.getContext('2d');snap=mk(W,H);snapctx=snap.getContext('2d');
+    strk=mk(W,H);sctx=strk.getContext('2d');
     URL.revokeObjectURL(url);
     fileName=f.name.replace(/\.[^.]+$/,'')||'image';fileType=f.type==='image/png'?'image/png':'image/jpeg';
     undoS=[];redoS=[];undoBytes=0;cloneSrc=null;cloneOff=null;dirty=false;loaded=true;
@@ -205,9 +205,11 @@ function render(){
   vctx.setTransform(dpr,0,0,dpr,0,0);vctx.fillStyle='#0b0c0d';vctx.fillRect(0,0,cw,ch);
   if(!loaded)return;
   vctx.save();vctx.translate(tx,ty);vctx.scale(scale,scale);
-  vctx.imageSmoothingEnabled=scale<2;vctx.imageSmoothingQuality='high';
-  vctx.drawImage(showOrig?orig:work,0,0);
-  if(act&&act.type==='stroke'&&!showOrig){vctx.globalAlpha=opacity;vctx.drawImage(strk,0,0);vctx.globalAlpha=1}
+  vctx.imageSmoothingEnabled=scale<2;vctx.imageSmoothingQuality=(act||gesture)?'low':'high';
+  const vx0=Math.max(0,Math.floor(-tx/scale)-1),vy0=Math.max(0,Math.floor(-ty/scale)-1),vx1=Math.min(W,Math.ceil((cw-tx)/scale)+1),vy1=Math.min(H,Math.ceil((ch-ty)/scale)+1);
+  if(vx1>vx0&&vy1>vy0){vctx.drawImage(showOrig?orig:work,vx0,vy0,vx1-vx0,vy1-vy0,vx0,vy0,vx1-vx0,vy1-vy0);
+  if(act&&act.type==='stroke'&&!showOrig){const bb=act.bb,x0=Math.max(vx0,Math.floor(bb[0])),y0=Math.max(vy0,Math.floor(bb[1])),x1=Math.min(vx1,Math.ceil(bb[2])),y1=Math.min(vy1,Math.ceil(bb[3]));
+    if(x1>x0&&y1>y0){vctx.globalAlpha=opacity;vctx.drawImage(strk,x0,y0,x1-x0,y1-y0,x0,y0,x1-x0,y1-y0);vctx.globalAlpha=1}}}
   vctx.restore();
   if(scale>=12){/* 像素格線 */vctx.strokeStyle='rgba(128,128,128,.25)';vctx.lineWidth=1;vctx.beginPath();
     const x0=Math.max(0,Math.floor(-tx/scale)),x1=Math.min(W,Math.ceil((cw-tx)/scale)),y0=Math.max(0,Math.floor(-ty/scale)),y1=Math.min(H,Math.ceil((ch-ty)/scale));
@@ -216,7 +218,9 @@ function render(){
   if(cursor&&(tool==='brush'||tool==='clone'||tool==='restore')){ring(cursor.x,cursor.y,Math.max(2,size/2*scale))}
   if(tool==='clone'&&cloneSrc){let p=cloneSrc;if(act&&act.type==='stroke'&&cloneOff&&act.last)p={x:act.last.x+cloneOff.dx,y:act.last.y+cloneOff.dy};cross(tx+p.x*scale,ty+p.y*scale)}
   $('#zoomLbl').textContent=Math.round(scale*100)+'%';
+  if(loupeReq){drawLoupe(loupeReq.p,loupeReq.x,loupeReq.y);loupeReq=null}
 }
+let loupeReq=null;function askLoupe(p,s){loupeReq={p,x:s.x,y:s.y};req()}
 function ring(x,y,r){vctx.lineWidth=1.5;vctx.strokeStyle='#000';vctx.beginPath();vctx.arc(x,y,r+1,0,7);vctx.stroke();vctx.strokeStyle='#fff';vctx.beginPath();vctx.arc(x,y,r,0,7);vctx.stroke()}
 function cross(x,y){vctx.lineWidth=3;vctx.strokeStyle='#000';const d=()=>{vctx.beginPath();vctx.moveTo(x-12,y);vctx.lineTo(x+12,y);vctx.moveTo(x,y-12);vctx.lineTo(x,y+12);vctx.stroke()};d();vctx.lineWidth=1.5;vctx.strokeStyle='#f0b429';d();vctx.beginPath();vctx.arc(x,y,6,0,7);vctx.stroke()}
 
@@ -224,8 +228,9 @@ function drawLoupe(p,sx,sy){
   loupe.style.display='block';loupe.classList.toggle('r',sx<200&&sy<200);
   const S=300,z=Math.max(10,Math.min(60,scale*4))*2;
   lctx.setTransform(1,0,0,1,0,0);lctx.fillStyle='#000';lctx.fillRect(0,0,S,S);
+  const hw=Math.ceil(S/2/z)+1,rx=Math.floor(p.x)-hw,ry=Math.floor(p.y)-hw,n=hw*2+1;
   lctx.save();lctx.translate(S/2,S/2);lctx.scale(z,z);lctx.translate(-p.x,-p.y);lctx.imageSmoothingEnabled=false;
-  lctx.drawImage(work,0,0);if(act&&act.type==='stroke'){lctx.globalAlpha=opacity;lctx.drawImage(strk,0,0);lctx.globalAlpha=1}
+  lctx.drawImage(work,rx,ry,n,n,rx,ry,n,n);if(act&&act.type==='stroke'){lctx.globalAlpha=opacity;lctx.drawImage(strk,rx,ry,n,n,rx,ry,n,n);lctx.globalAlpha=1}
   lctx.restore();
   lctx.lineWidth=3;lctx.strokeStyle='#000';lctx.strokeRect(S/2-z*.5-1,S/2-z*.5-1,z+2,z+2);lctx.lineWidth=2;lctx.strokeStyle='#fff';lctx.strokeRect(S/2-z*.5,S/2-z*.5,z,z);
   if(tool!=='pick'){lctx.strokeStyle='#fff';lctx.beginPath();lctx.arc(S/2,S/2,size/2*z,0,7);lctx.stroke()}
@@ -247,13 +252,13 @@ function stamp(x,y){
   const h=tipD/2,b=act.bb;
   if(x-h<b[0])b[0]=x-h;if(y-h<b[1])b[1]=y-h;if(x+h>b[2])b[2]=x+h;if(y+h>b[3])b[3]=y+h;
   if(tool==='brush'){sctx.drawImage(tipC,x-h,y-h);return}
-  const src=tool==='clone'?snap:orig,ox=tool==='clone'?cloneOff.dx:0,oy=tool==='clone'?cloneOff.dy:0;
+  const src=tool==='clone'?work:orig,ox=tool==='clone'?cloneOff.dx:0,oy=tool==='clone'?cloneOff.dy:0;
   dctx.globalCompositeOperation='source-over';dctx.clearRect(0,0,tipD,tipD);
-  dctx.drawImage(src,-(x+ox-h),-(y+oy-h));
+  dctx.drawImage(src,x+ox-h,y+oy-h,tipD,tipD,0,0,tipD,tipD);
   dctx.globalCompositeOperation='destination-in';dctx.drawImage(mask,0,0);
   sctx.drawImage(dab,x-h,y-h);
 }
-function strokeTo(p){const l=act.last,dx=p.x-l.x,dy=p.y-l.y,dist=Math.hypot(dx,dy),step=Math.max(.35,size*.08);
+function strokeTo(p){const l=act.last,dx=p.x-l.x,dy=p.y-l.y,dist=Math.hypot(dx,dy),step=Math.max(.5,size*(tool==='brush'?.08:.12));
   if(dist<step)return;const n=Math.floor(dist/step);for(let i=1;i<=n;i++)stamp(l.x+dx*i/n,l.y+dy*i/n);act.last=p}
 
 const toImg=(s)=>({x:(s.x-tx)/scale,y:(s.y-ty)/scale});
@@ -264,16 +269,16 @@ function startAct(s){
   if(tool==='pick'){act={type:'pick'};pick(p,s);return}
   if(tool==='clone'&&(settingSrc||!cloneSrc)){cloneSrc=p;cloneOff=null;settingSrc=false;updHint();act={type:'none'};toast('已設定來源，開始塗抹要消除的地方');req();return}
   sctx.clearRect(0,0,W,H);
-  if(tool==='clone'){snapctx.clearRect(0,0,W,H);snapctx.drawImage(work,0,0);if(!cloneOff)cloneOff={dx:cloneSrc.x-p.x,dy:cloneSrc.y-p.y}}
-  buildTips();act={type:'stroke',last:p,bb:[1e9,1e9,-1e9,-1e9]};stamp(p.x,p.y);drawLoupe(p,s.x,s.y);req();
+  if(tool==='clone'){if(!cloneOff)cloneOff={dx:cloneSrc.x-p.x,dy:cloneSrc.y-p.y}}
+  buildTips();act={type:'stroke',last:p,bb:[1e9,1e9,-1e9,-1e9]};stamp(p.x,p.y);askLoupe(p,s);
 }
 function moveAct(s){const p=toImg(s);cursor=s;
-  if(act.type==='pick')pick(p,s);else if(act.type==='stroke'){strokeTo(p);drawLoupe(p,s.x,s.y)}req()}
+  if(act.type==='pick')pick(p,s);else if(act.type==='stroke'){strokeTo(p);askLoupe(p,s)}}
 function endAct(){
   if(act&&act.type==='stroke')commit();
   if(act&&act.type==='pick')setColor(color,true);
-  act=null;cursor=null;loupe.style.display='none';req()}
-function cancelAct(){if(act&&act.type==='stroke')sctx.clearRect(0,0,W,H);act=null;cursor=null;loupe.style.display='none';req()}
+  act=null;cursor=null;loupeReq=null;loupe.style.display='none';req()}
+function cancelAct(){if(act&&act.type==='stroke')sctx.clearRect(0,0,W,H);act=null;cursor=null;loupeReq=null;loupe.style.display='none';req()}
 function commit(){
   const b=act.bb,x0=Math.max(0,Math.floor(b[0])),y0=Math.max(0,Math.floor(b[1])),x1=Math.min(W,Math.ceil(b[2])),y1=Math.min(H,Math.ceil(b[3])),w=x1-x0,h=y1-y0;
   if(w>0&&h>0){pushUndo({x:x0,y:y0,d:wctx.getImageData(x0,y0,w,h)});redoS=[];
@@ -287,7 +292,7 @@ function pick(p,s){
     const d=wctx.getImageData(cx,cy,cw,ch).data;let r=0,g=0,bl=0,c=0;
     for(let i=0;i<d.length;i+=4){r+=d[i];g+=d[i+1];bl+=d[i+2];c++}
     const h2=v=>Math.round(v/c).toString(16).padStart(2,'0');setColor('#'+h2(r)+h2(g)+h2(bl),false)}
-  drawLoupe(p,s.x,s.y);
+  askLoupe(p,s);
 }
 
 /* ---------- 復原 ---------- */

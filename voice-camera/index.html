@@ -186,8 +186,8 @@ async function openCam(devId){
   v.srcObject=stream;applyView();
   await v.play().catch(()=>{});
   if(caps.focusMode&&caps.focusMode.includes('continuous'))track.applyConstraints({advanced:[{focusMode:'continuous'}]}).catch(()=>{});
+  setTimeout(()=>{try{caps=track.getCapabilities()||caps}catch(e){}renderFlash();renderLens()},800);
   if(flashMode==='light'){if(hasTorch())torch(true);screenLight(facing==='user')}
-  if(!hasTorch()&&facing!=='user'&&flashMode!=='off')flashMode='off';
   if(typeof renderFlash==='function')renderFlash();
 }
 function applyView(){v.style.transform=(facing==='user'?'scaleX(-1) ':'')+(dz>1?'scale('+dz+')':'')}
@@ -268,16 +268,22 @@ function flash(){const f=$('flash');f.classList.add('on');setTimeout(()=>f.class
 function beep(){try{audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.frequency.value=880;g.gain.value=.08;o.connect(g).connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+.08)}catch(e){}}
 
 /* ---------- 閃光燈：off / flash（拍照時）/ light（常亮） ---------- */
-const hasTorch=()=>facing!=='user'&&!!caps.torch;
+let torchOK=null;
+const hasTorch=()=>facing!=='user'&&(!!caps.torch||torchOK===true);
 function torch(on){if(hasTorch())return track.applyConstraints({advanced:[{torch:on}]}).catch(()=>{});return Promise.resolve()}
 function screenLight(on){$('screenLight').style.opacity=on?'1':'0'}
 function renderFlash(){
-  const b=$('flashBtn');b.classList.toggle('show',hasTorch()||facing==='user');
+  const b=$('flashBtn');b.classList.add('show');
   b.classList.toggle('on',flashMode!=='off');
   $('flashTxt').textContent=flashMode==='flash'?'閃光':flashMode==='light'?'常亮':'';
 }
 async function setFlash(m){
-  if(!hasTorch()&&facing!=='user'){toast('這個鏡頭不支援閃光燈');return}
+  if(facing!=='user'&&!hasTorch()&&m!=='off'){
+    // 有些手機一開始沒回報，直接試開一次
+    try{await track.applyConstraints({advanced:[{torch:true}]});const st=track.getSettings?track.getSettings():{};torchOK=st.torch===true}catch(e){torchOK=false}
+    if(!torchOK){try{await track.applyConstraints({advanced:[{torch:false}]})}catch(e){}toast('Chrome 沒開放這支手機的閃光燈',2600);flashMode='off';renderFlash();return}
+    if(m==='flash')await torch(false);
+  }
   flashMode=m;
   if(facing!=='user')await torch(m==='light');
   screenLight(facing==='user'&&m==='light');

@@ -5,11 +5,11 @@ plugins {
 def runNumber = (System.getenv('GITHUB_RUN_NUMBER') ?: '1') as Integer
 
 android {
-    namespace 'tw.manga.translator'
+    namespace 'tw.vizh.translator'
     compileSdk 34
 
     defaultConfig {
-        applicationId 'tw.manga.translator'
+        applicationId 'tw.vizh.translator'
         minSdk 24
         targetSdk 34
         versionCode runNumber

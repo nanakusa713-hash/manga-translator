@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>越中即時翻譯</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700&family=Noto+Sans+TC:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+/* VOICE: warm, practical, a tool used mid-conversation at a table
+   IDEA: a two-sided interpreter's card — each person owns one coloured half
+   PICTURE: the live conversation itself, bubbles in each speaker's colour
+   COLOUR and TYPE: vermilion for Tiếng Việt, indigo for 中文, on paper white; Be Vietnam Pro + Noto Sans TC
+   LAYOUT: header, scrolling log, two fixed speaker panels at the bottom (top one can flip for face-to-face) */
+:root{color-scheme:light dark;
+--bg:light-dark(#f7f5f1,#121318);--card:light-dark(#ffffff,#1c1d24);--ink:light-dark(#17181c,#ecebe8);--mute:light-dark(#6b6c72,#9a9ba3);
+--line:light-dark(#e4e1da,#2c2d36);--vi:#c8322b;--vi2:light-dark(#fbe9e7,#3a1d1b);--zh:#2b48a8;--zh2:light-dark(#e8ecfa,#1b2240)}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Noto Sans TC","Be Vietnam Pro",system-ui,sans-serif;overflow-x:clip;display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:10px;padding:12px max(4vw,14px);border-bottom:1px solid var(--line);flex-wrap:wrap}
+h1{font-size:20px;line-height:1.1;margin:0;flex:1;font-weight:700}
+h1 small{display:block;font-size:13px;font-weight:400;color:var(--mute);font-family:"Be Vietnam Pro",sans-serif}
+.tog{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--mute);cursor:pointer;min-height:44px;user-select:none}
+.tog input{width:20px;height:20px;accent-color:var(--zh)}
+.iconbtn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;min-height:40px;padding:0 12px;font:inherit;font-size:13px;cursor:pointer}
+#log{flex:1;overflow-y:auto;padding:14px max(4vw,14px) 20px;display:flex;flex-direction:column;gap:12px}
+.empty{margin:auto;text-align:center;color:var(--mute);max-width:420px;font-size:15px}
+.empty b{color:var(--ink)}
+.msg{max-width:min(88%,620px);border-radius:16px;padding:10px 14px 8px;background:var(--card);border:1px solid var(--line);position:relative}
+.msg.vi{align-self:flex-start;border-left:5px solid var(--vi)}
+.msg.zh{align-self:flex-end;border-right:5px solid var(--zh)}
+.orig{font-size:14px;color:var(--mute);white-space:pre-wrap}
+.tr{font-size:21px;line-height:1.35;font-weight:600;margin-top:4px;white-space:pre-wrap}
+.msg.vi .tr{color:var(--zh)}.msg.zh .tr{color:var(--vi);font-family:"Be Vietnam Pro","Noto Sans TC",sans-serif}
+.msg.vi .orig{font-family:"Be Vietnam Pro",sans-serif}
+.tools{display:flex;gap:6px;justify-content:flex-end;margin-top:6px}
+.tools button{border:0;background:transparent;color:var(--mute);font:inherit;font-size:13px;min-height:36px;padding:0 8px;border-radius:8px;cursor:pointer}
+.tools button:hover,.tools button:focus-visible{background:var(--line);color:var(--ink)}
+.pending .tr{opacity:.55}
+.err{color:var(--vi);font-size:14px}
+#pads{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;padding:10px max(4vw,14px) calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--bg)}
+.pad{border-radius:18px;padding:10px;display:flex;flex-direction:column;gap:8px}
+.pad.vi{background:var(--vi2)}.pad.zh{background:var(--zh2)}
+.pad label{font-size:13px;font-weight:600}
+.pad.vi label{color:var(--vi);font-family:"Be Vietnam Pro",sans-serif}.pad.zh label{color:var(--zh)}
+.row{display:flex;gap:8px;align-items:flex-end}
+textarea{flex:1;font:inherit;font-size:16px;border:1px solid var(--line);border-radius:12px;padding:9px 10px;min-height:46px;max-height:120px;resize:none;background:var(--card);color:var(--ink)}
+.pad.vi textarea{font-family:"Be Vietnam Pro",sans-serif}
+textarea:focus-visible,button:focus-visible{outline:3px solid color-mix(in srgb,var(--zh) 55%,transparent);outline-offset:2px}
+.send{min-width:46px;min-height:46px;border-radius:12px;border:0;color:#fff;font:inherit;font-weight:700;cursor:pointer}
+.mic{width:100%;min-height:56px;border:0;border-radius:14px;color:#fff;font:inherit;font-size:17px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px}
+.vi .send,.vi .mic{background:var(--vi)}.zh .send,.zh .mic{background:var(--zh)}
+.vi .mic{font-family:"Be Vietnam Pro",sans-serif}
+.mic.on{animation:pulse 1.2s ease-in-out infinite}
+.mic svg{width:22px;height:22px}
+@keyframes pulse{50%{filter:brightness(1.25);transform:scale(.98)}}
+@media(prefers-reduced-motion:reduce){.mic.on{animation:none;outline:4px solid #fff8}}
+.hint{font-size:13px;color:var(--mute);padding:0 max(4vw,14px) 6px;text-align:center}
+.hint:empty{display:none}
+#settings{padding:8px max(4vw,14px);border-bottom:1px solid var(--line);font-size:14px}
+#settings summary{cursor:pointer;color:var(--mute);min-height:32px}
+#settings p{margin:6px 0;color:var(--mute)}
+#key{flex:1;font:inherit;font-size:16px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--card);color:var(--ink)}
+.hint.big{font-size:15px;color:var(--ink);background:var(--card);border:2px solid var(--zh);border-radius:14px;margin:8px max(4vw,14px) 0;padding:10px 12px}
+body.face .pad.vi{transform:rotate(180deg)}
+@media(max-width:600px){#pads{grid-template-columns:1fr;gap:8px}.mic{min-height:52px}.tr{font-size:19px}h1{font-size:18px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>越南文 ⇄ 中文 即時翻譯<small>Phiên dịch Việt ⇄ Trung</small></h1>
+  <label class="tog"><input type="checkbox" id="autoSpeak" checked>自動朗讀</label>
+  <label class="tog"><input type="checkbox" id="face">面對面</label>
+  <button class="iconbtn" id="clear" type="button">清除</button>
+</header>
+<details id="settings"><summary>設定 · <span id="engine"></span></summary>
+  <p>不填就用免費的 Google 翻譯。填入 Anthropic API 金鑰（console.anthropic.com 申請，按用量付費）就改用 Claude 翻譯，比較自然。金鑰只存在這支手機。</p>
+  <div class="row"><input id="key" type="password" placeholder="sk-ant-…" autocomplete="off"><button class="iconbtn" id="saveKey" type="button">儲存</button></div>
+</details>
+
+<div id="log" aria-live="polite">
+  <div class="empty" id="empty"><b>按下麥克風開始說話，或直接打字。</b><br>越南文會翻成中文，中文會翻成越南文，翻譯結果會自動念出來。<br><br><span style="font-family:'Be Vietnam Pro'">Nhấn micro để nói tiếng Việt, hoặc gõ chữ.</span></div>
+</div>
+
+<div class="hint" id="hint"></div>
+
+<div id="pads">
+  <div class="pad vi" data-side="vi">
+    <label for="in-vi">Tiếng Việt → 中文</label>
+    <div class="row">
+      <textarea id="in-vi" rows="1" placeholder="Gõ tiếng Việt…" lang="vi"></textarea>
+      <button class="send" type="button" data-send="vi" aria-label="Dịch">→</button>
+    </div>
+    <button class="mic" type="button" data-mic="vi"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V21h2v-2.07A7 7 0 0 0 19 12h-2Z"/></svg><span>Nói tiếng Việt</span></button>
+  </div>
+  <div class="pad zh" data-side="zh">
+    <label for="in-zh">中文 → Tiếng Việt</label>
+    <div class="row">
+      <textarea id="in-zh" rows="1" placeholder="輸入中文…" lang="zh-Hant"></textarea>
+      <button class="send" type="button" data-send="zh" aria-label="翻譯">→</button>
+    </div>
+    <button class="mic" type="button" data-mic="zh"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V21h2v-2.07A7 7 0 0 0 19 12h-2Z"/></svg><span>說中文</span></button>
+  </div>
+</div>
+
+<script>
+{
+const L = {
+  vi:{name:'Vietnamese', to:'zh', rec:'vi-VN', tts:'vi-VN', ttsShort:'vi', micIdle:'Nói tiếng Việt', micOn:'Đang nghe… (nhấn để dừng)'},
+  zh:{name:'Traditional Chinese', to:'vi', rec:'zh-TW', tts:'zh-TW', ttsShort:'zh-TW', micIdle:'說中文', micOn:'聆聽中…（再按一下停止）'}
+};
+const $ = s => document.querySelector(s);
+const log = $('#log'), hint = $('#hint');
+let sample = null, tts = null, dict = null;
+let nativeBroken = false, active = null, rec = null, dictBase = '';
+const APP = window.Android || null;
+/* 在 App 裡用 Android 原生語音辨識，包裝成跟網頁 SpeechRecognition 一樣的介面 */
+class AppSR {
+  start(){ window.__appRec = this; APP.startListening(this.lang); }
+  stop(){ APP.stopListening(); }
+  abort(){ APP.cancelListening(); this._end(); }
+  _end(){ if (window.__appRec === this) { window.__appRec = null; this.onend && this.onend(); } }
+}
+window.onSpeech = (type, text) => {
+  const r = window.__appRec; if (!r) return;
+  if (type === 'start') r.onstart && r.onstart();
+  else if (type === 'partial') r.onresult && r.onresult({results: [{0: {transcript: text}, isFinal: false}]});
+  else if (type === 'final') { r.onresult && r.onresult({results: [{0: {transcript: text}, isFinal: true}]}); r._end(); }
+  else if (type === 'error') {
+    if (text === 'unavailable') setHint('手機沒有語音辨識服務：請安裝或更新「Google」App。');
+    else if (text === 'network') setHint('語音辨識需要網路，請檢查連線。');
+    else if (text === 'not-allowed') setHint('請允許「越中翻譯」使用麥克風，然後再按一次。');
+    r.onerror && r.onerror({error: text === 'not-allowed' ? 'app-not-allowed' : text});
+    r._end();
+  }
+};
+const SR = APP ? AppSR : (window.SpeechRecognition || window.webkitSpeechRecognition);
+
+try { $('#autoSpeak').checked = localStorage.getItem('autoSpeak') !== '0'; $('#face').checked = localStorage.getItem('face') === '1'; } catch(e){}
+document.body.classList.toggle('face', $('#face').checked);
+
+$('#key').value = getKey();
+const engine = () => $('#engine').textContent = getKey() ? '目前使用：Claude 翻譯' : '目前使用：Google 翻譯（免費）';
+engine();
+$('#saveKey').addEventListener('click', () => { try { localStorage.setItem('apiKey', $('#key').value.trim()); } catch(e){} engine(); $('#settings').open = false; });
+if (!SR) setHint('這個瀏覽器不支援語音輸入，請用 Android 的 Chrome 開啟。');
+
+function setHint(t){ hint.textContent = t; hint.classList.remove('big'); }
+
+/* ---------- speech output ---------- */
+let unlocked = false;
+function unlockSpeech(){
+  if (unlocked || !window.speechSynthesis) return;
+  try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); unlocked = true; } catch(e){}
+}
+function pickVoice(lang){
+  const vs = (window.speechSynthesis && speechSynthesis.getVoices()) || [];
+  const base = lang.split('-')[0].toLowerCase();
+  return vs.find(v => v.lang.toLowerCase().replace('_','-') === lang.toLowerCase())
+      || (base === 'zh' ? vs.find(v => /zh[-_](tw|hk|hant)/i.test(v.lang)) : null)
+      || vs.find(v => v.lang.toLowerCase().startsWith(base));
+}
+if (window.speechSynthesis) { speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices(); }
+async function speak(text, side){
+  const lang = L[side].tts;
+  if (APP) {
+    const r = APP.speak(text, lang);
+    if (r === 'missing') setHint(side === 'vi' ? '手機沒有越南文語音：到「設定 → 文字轉語音 → Google 語音引擎 → 安裝語音資料」下載越南文。' : '手機沒有中文語音：到「設定 → 文字轉語音」下載中文（台灣）。');
+    else if (r === 'notready') setHint('朗讀功能還在準備，請再按一次 🔊。');
+    return;
+  }
+  const v = pickVoice(lang);
+  if (v) {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text); u.lang = v.lang; u.voice = v; u.rate = side === 'vi' ? .95 : 1;
+    speechSynthesis.speak(u); return;
+  }
+  if (tts) { try { await tts.speak(text, {language: L[side].ttsShort}); return; } catch(e){} }
+  setHint(side === 'vi' ? '這台裝置沒有越南文語音，請到系統設定 → 輔助使用 → 朗讀內容 下載越南文語音。' : '這台裝置沒有中文語音可用。');
+}
+
+/* ---------- translation ---------- */
+function prompt(text, from){
+  const to = L[L[from].to].name;
+  return `You are a professional live interpreter between Vietnamese and Traditional Chinese (Taiwan usage, 繁體中文).
+Translate the text below from ${L[from].name} into ${to}.
+- Keep the meaning, tone and politeness level; make it sound natural and spoken.
+- If the input is actually already in ${to}, translate it into ${L[from].name} instead.
+- Output ONLY the translation. No quotes, notes, romanization or explanations.
+
+Text:
+${text}`;
+}
+function getKey(){ try { return localStorage.getItem('apiKey') || ''; } catch(e){ return ''; } }
+async function viaGoogle(text, from){
+  const sl = from === 'vi' ? 'vi' : 'zh-TW', tl = from === 'vi' ? 'zh-TW' : 'vi';
+  const r = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`);
+  if (!r.ok) throw {code: r.status === 429 ? 'rate_limited' : 'http'};
+  const d = await r.json();
+  return d[0].map(x => x[0]).join('');
+}
+async function viaClaude(text, from){
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{'content-type':'application/json','x-api-key':getKey(),'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+    body: JSON.stringify({model:'claude-haiku-5-5', max_tokens:1024, messages:[{role:'user', content: prompt(text, from)}]})
+  });
+  if (!r.ok) {
+    if (r.status === 401) throw {code:'badkey'};
+    if (r.status === 429) throw {code:'rate_limited'};
+    return viaGoogle(text, from);
+  }
+  const d = await r.json();
+  return d.content.filter(c => c.type === 'text').map(c => c.text).join('');
+}
+const pendingTr = {};
+let trSeq = 0;
+window.onTranslated = (id, ok, text) => {
+  const p = pendingTr[id]; if (!p) return; delete pendingTr[id];
+  ok === 'ok' ? p.resolve(text) : p.reject({code: text});
+};
+function viaApp(text, from){
+  return new Promise((resolve, reject) => {
+    const id = 't' + (++trSeq); pendingTr[id] = {resolve, reject};
+    APP.translate(id, text, from === 'vi' ? 'vi' : 'zh-TW', from === 'vi' ? 'zh-TW' : 'vi', getKey(), prompt(text, from));
+  });
+}
+async function translate(text, from){
+  text = text.trim(); if (!text) return;
+  $('#empty')?.remove();
+  const el = document.createElement('div');
+  el.className = 'msg pending ' + from;
+  el.innerHTML = `<div class="orig"></div><div class="tr">…</div><div class="tools"><button type="button" data-act="speak">🔊 ${from==='vi'?'朗讀':'Đọc'}</button><button type="button" data-act="copy">${from==='vi'?'複製':'Sao chép'}</button></div>`;
+  el.querySelector('.orig').textContent = text;
+  el.dataset.to = L[from].to;
+  log.appendChild(el); log.scrollTop = log.scrollHeight;
+  const trEl = el.querySelector('.tr');
+  try {
+    const out = (APP ? await viaApp(text, from) : getKey() ? await viaClaude(text, from) : await viaGoogle(text, from)).trim();
+    trEl.textContent = out; el.classList.remove('pending');
+    if ($('#autoSpeak').checked && out) speak(out, L[from].to);
+  } catch(e) {
+    el.classList.remove('pending');
+    trEl.innerHTML = '';
+    const s = document.createElement('span'); s.className = 'err';
+    s.textContent = e && e.code === 'rate_limited' ? '翻譯太頻繁，請稍等幾秒再試。' : e && e.code === 'badkey' ? 'Claude API 金鑰錯誤，請到「設定」檢查。' : '翻譯失敗，請再試一次。';
+    trEl.appendChild(s);
+  }
+}
+
+/* ---------- speech input ---------- */
+function setMic(side, on){
+  const b = document.querySelector(`[data-mic="${side}"]`);
+  b.classList.toggle('on', on);
+  b.querySelector('span').textContent = on ? L[side].micOn : L[side].micIdle;
+}
+function finish(side){
+  const ta = $('#in-' + side); const t = ta.value.trim();
+  setMic(side, false); active = null;
+  if (t) { ta.value = ''; translate(t, side); }
+}
+function startNative(side){
+  const ta = $('#in-' + side); const base = ta.value ? ta.value.trim() + ' ' : '';
+  rec = new SR(); rec.lang = L[side].rec; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+  let finalTxt = '';
+  rec.onresult = ev => {
+    let interim = ''; finalTxt = '';
+    for (const r of ev.results) (r.isFinal ? (finalTxt += r[0].transcript) : (interim += r[0].transcript));
+    ta.value = base + finalTxt + interim;
+  };
+  rec.onerror = ev => {
+    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed' || ev.error === 'audio-capture') {
+      micFailed(side);
+    }
+  };
+  let heard = false;
+  rec.onstart = rec.onaudiostart = () => { heard = true; };
+  rec.onend = () => { if (active === side && rec) { rec = null; finish(side); } };
+  try { rec.start(); active = side; setMic(side, true); } catch(e){ return micFailed(side); }
+  setTimeout(() => {
+    if (!heard && active === side) { try { rec && rec.abort(); } catch(e){} rec = null; micFailed(side); }
+  }, 8000);
+}
+function micFailed(side){
+  rec = null; active = null; setMic(side, false);
+  if (APP) { if (!hint.textContent) setHint('沒有聽到聲音，請再按一次麥克風。'); return; }
+  nativeBroken = true;
+  if (dict) { setHint('請再按一次麥克風。'); return; }
+  keyboardMode(side);
+}
+function keyboardMode(side){
+  for (const s of ['vi','zh']) {
+    const b = document.querySelector(`[data-mic="${s}"] span`);
+    L[s].micIdle = s === 'vi' ? 'Dùng 🎤 trên bàn phím' : '改用鍵盤 🎤 說話';
+    b.textContent = L[s].micIdle;
+  }
+  hint.innerHTML = '<b>這裡無法直接收音。</b>請點輸入框 → 按鍵盤上的 🎤 說話 → 說完按 →<br><span style="font-family:\'Be Vietnam Pro\'">Nhấn vào ô nhập → bấm 🎤 trên bàn phím → nói xong bấm →</span>';
+  hint.classList.add('big');
+  $('#in-' + side).focus();
+}
+let dictHooked = false;
+function hookDict(){
+  dict.onPartial(({text}) => { if (active) $('#in-' + active).value = dictBase + text; });
+  dict.onFinal(({text}) => { if (active) { dictBase += text + ' '; $('#in-' + active).value = dictBase; } });
+  dict.onState(({state}) => { if (state === 'idle' && active) finish(active); });
+}
+function startDict(side){
+  if (!dictHooked) { hookDict(); dictHooked = true; }
+  const ta = $('#in-' + side); dictBase = ta.value ? ta.value.trim() + ' ' : '';
+  active = side; setMic(side, true);
+  dict.start().catch(e => {
+    setMic(side, false); active = null;
+    setHint(e && e.code === 'not_granted' ? '麥克風權限被拒絕：可以改用打字，或手機鍵盤上的🎤。' : '語音輸入無法啟動，請再試一次。');
+  });
+}
+function micClick(side){
+  unlockSpeech();
+  if (nativeBroken && !dict) return keyboardMode(side);
+  setHint('');
+  if (APP) APP.stopSpeaking();
+  else if (window.speechSynthesis) speechSynthesis.cancel();
+  if (tts) try { tts.stop(); } catch(e){}
+  if (active) {
+    const was = active;
+    if (rec) { try { rec.stop(); } catch(e){ rec = null; finish(was); } }
+    else if (dict) { dict.stop().catch(()=>{}); }
+    if (was === side) return;
+  }
+  if (SR && !nativeBroken) return startNative(side);
+  if (dict) return startDict(side);
+  keyboardMode(side);
+}
+
+/* ---------- events ---------- */
+document.addEventListener('click', ev => {
+  const m = ev.target.closest('[data-mic]'); if (m) return micClick(m.dataset.mic);
+  const s = ev.target.closest('[data-send]');
+  if (s) { unlockSpeech(); const side = s.dataset.send, ta = $('#in-' + side); const t = ta.value; ta.value = ''; return translate(t, side); }
+  const a = ev.target.closest('[data-act]');
+  if (a) {
+    unlockSpeech();
+    const msg = a.closest('.msg'), t = msg.querySelector('.tr').textContent;
+    if (a.dataset.act === 'speak') speak(t, msg.dataset.to);
+    else navigator.clipboard?.writeText(t).then(() => { const o = a.textContent; a.textContent = '✓'; setTimeout(() => a.textContent = o, 1200); }).catch(()=>{});
+  }
+});
+for (const side of ['vi','zh']) {
+  $('#in-' + side).addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); unlockSpeech(); const t = e.target.value; e.target.value = ''; translate(t, side); }
+  });
+}
+$('#autoSpeak').addEventListener('change', e => { try { localStorage.setItem('autoSpeak', e.target.checked ? '1' : '0'); } catch(x){} });
+$('#face').addEventListener('change', e => { document.body.classList.toggle('face', e.target.checked); try { localStorage.setItem('face', e.target.checked ? '1' : '0'); } catch(x){} });
+$('#clear').addEventListener('click', () => { log.innerHTML = '<div class="empty" id="empty"><b>已清除。</b> 按麥克風繼續對話。</div>'; });
+}
+</script>
+</body>
+</html>

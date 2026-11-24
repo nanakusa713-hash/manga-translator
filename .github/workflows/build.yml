@@ -1,8 +1,8 @@
-name: Build APK
+name: Build 越中翻譯 APK
 
 on:
   push:
-    branches: [main]
+    branches: [vi-zh-translator]
   workflow_dispatch:
 
 permissions:
@@ -27,13 +27,13 @@ jobs:
         run: gradle assembleRelease --no-daemon --stacktrace
 
       - name: Rename
-        run: cp app/build/outputs/apk/release/app-release.apk manga-translator.apk
+        run: cp app/build/outputs/apk/release/app-release.apk vi-zh-translator.apk
 
       - name: Publish to Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: 漫畫翻譯 App 最新版
-          body: 用手機下載下面的 manga-translator.apk 安裝即可。
-          files: manga-translator.apk
-          make_latest: true
+          tag_name: vi-zh-latest
+          name: 越中翻譯 App 最新版
+          body: 越南文 ⇄ 中文 即時語音翻譯。用手機下載下面的 vi-zh-translator.apk 安裝即可。
+          files: vi-zh-translator.apk
+          make_latest: false

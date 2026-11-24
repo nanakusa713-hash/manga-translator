@@ -54,6 +54,9 @@ textarea:focus-visible,button:focus-visible{outline:3px solid color-mix(in srgb,
 .vi .send,.vi .mic{background:var(--vi)}.zh .send,.zh .mic{background:var(--zh)}
 .vi .mic{font-family:"Be Vietnam Pro",sans-serif}
 .mic.on{animation:pulse 1.2s ease-in-out infinite}
+.vi .mic.on{box-shadow:0 0 0 3px var(--bg),0 0 0 6px var(--vi)}.zh .mic.on{box-shadow:0 0 0 3px var(--bg),0 0 0 6px var(--zh)}
+.mic.prep{opacity:.7}
+.mic{touch-action:manipulation;transition:none}
 .mic svg{width:22px;height:22px}
 @keyframes pulse{50%{filter:brightness(1.25);transform:scale(.98)}}
 @media(prefers-reduced-motion:reduce){.mic.on{animation:none;outline:4px solid #fff8}}
@@ -108,8 +111,8 @@ body.face .pad.vi{transform:rotate(180deg)}
 <script>
 {
 const L = {
-  vi:{name:'Vietnamese', to:'zh', rec:'vi-VN', tts:'vi-VN', ttsShort:'vi', micIdle:'Nói tiếng Việt', micOn:'Đang nghe… (nhấn để dừng)'},
-  zh:{name:'Traditional Chinese', to:'vi', rec:'zh-TW', tts:'zh-TW', ttsShort:'zh-TW', micIdle:'說中文', micOn:'聆聽中…（再按一下停止）'}
+  vi:{name:'Vietnamese', to:'zh', rec:'vi-VN', tts:'vi-VN', ttsShort:'vi', micIdle:'Nói tiếng Việt', micOn:'Mời nói… (nhấn để dừng)', micPrep:'Đang chuẩn bị…'},
+  zh:{name:'Traditional Chinese', to:'vi', rec:'zh-TW', tts:'zh-TW', ttsShort:'zh-TW', micIdle:'說中文', micOn:'請說話…（再按一下停止）', micPrep:'準備中…'}
 };
 const $ = s => document.querySelector(s);
 const log = $('#log'), hint = $('#hint');
@@ -251,10 +254,11 @@ async function translate(text, from){
 }
 
 /* ---------- speech input ---------- */
-function setMic(side, on){
+function setMic(side, on, prep){
   const b = document.querySelector(`[data-mic="${side}"]`);
-  b.classList.toggle('on', on);
-  b.querySelector('span').textContent = on ? L[side].micOn : L[side].micIdle;
+  b.classList.toggle('on', on && !prep);
+  b.classList.toggle('prep', !!prep);
+  b.querySelector('span').textContent = prep ? L[side].micPrep : on ? L[side].micOn : L[side].micIdle;
 }
 function finish(side){
   const ta = $('#in-' + side); const t = ta.value.trim();
@@ -276,9 +280,9 @@ function startNative(side){
     }
   };
   let heard = false;
-  rec.onstart = rec.onaudiostart = () => { heard = true; };
+  rec.onstart = rec.onaudiostart = () => { heard = true; if (active === side) setMic(side, true); };
   rec.onend = () => { if (active === side && rec) { rec = null; finish(side); } };
-  try { rec.start(); active = side; setMic(side, true); } catch(e){ return micFailed(side); }
+  try { rec.start(); active = side; setMic(side, true, !!APP); } catch(e){ return micFailed(side); }
   setTimeout(() => {
     if (!heard && active === side) { try { rec && rec.abort(); } catch(e){} rec = null; micFailed(side); }
   }, 8000);

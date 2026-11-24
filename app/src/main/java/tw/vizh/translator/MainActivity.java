@@ -60,6 +60,8 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 23
                 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 1);
+        } else {
+            ensureRecognizer();
         }
     }
 
@@ -85,6 +87,50 @@ public class MainActivity extends Activity {
         return (list == null || list.isEmpty()) ? "" : list.get(0);
     }
 
+    private final RecognitionListener listener = new RecognitionListener() {
+        @Override public void onReadyForSpeech(Bundle params) { speechEvent("start", ""); }
+        @Override public void onBeginningOfSpeech() {}
+        @Override public void onRmsChanged(float rmsdB) {}
+        @Override public void onBufferReceived(byte[] buffer) {}
+        @Override public void onEndOfSpeech() {}
+        @Override public void onError(int error) {
+            String code;
+            switch (error) {
+                case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS: code = "not-allowed"; break;
+                case SpeechRecognizer.ERROR_NO_MATCH:
+                case SpeechRecognizer.ERROR_SPEECH_TIMEOUT: code = "no-speech"; break;
+                case SpeechRecognizer.ERROR_NETWORK:
+                case SpeechRecognizer.ERROR_NETWORK_TIMEOUT: code = "network"; break;
+                default: code = "other-" + error;
+            }
+            // 辨識服務卡住時重建，下次按就正常
+            if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+                if (recognizer != null) { recognizer.destroy(); recognizer = null; }
+            }
+            speechEvent("error", code);
+        }
+        @Override public void onResults(Bundle results) { speechEvent("final", first(results)); }
+        @Override public void onPartialResults(Bundle partial) {
+            String t = first(partial);
+            if (!t.isEmpty()) speechEvent("partial", t);
+        }
+        @Override public void onEvent(int eventType, Bundle params) {}
+    };
+
+    /** 預先建立一次並重複使用，按麥克風時不用重新連線辨識服務 */
+    private void ensureRecognizer() {
+        if (recognizer == null && SpeechRecognizer.isRecognitionAvailable(this)) {
+            recognizer = SpeechRecognizer.createSpeechRecognizer(this);
+            recognizer.setRecognitionListener(listener);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        ensureRecognizer();
+    }
+
     private void doListen(String lang) {
         if (Build.VERSION.SDK_INT >= 23
                 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -92,38 +138,14 @@ public class MainActivity extends Activity {
             speechEvent("error", "not-allowed");
             return;
         }
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+        ensureRecognizer();
+        if (recognizer == null) {
             speechEvent("error", "unavailable");
             return;
         }
         if (tts != null) tts.stop();
-        if (recognizer != null) recognizer.destroy();
-        recognizer = SpeechRecognizer.createSpeechRecognizer(this);
-        recognizer.setRecognitionListener(new RecognitionListener() {
-            @Override public void onReadyForSpeech(Bundle params) { speechEvent("start", ""); }
-            @Override public void onBeginningOfSpeech() {}
-            @Override public void onRmsChanged(float rmsdB) {}
-            @Override public void onBufferReceived(byte[] buffer) {}
-            @Override public void onEndOfSpeech() {}
-            @Override public void onError(int error) {
-                String code;
-                switch (error) {
-                    case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS: code = "not-allowed"; break;
-                    case SpeechRecognizer.ERROR_NO_MATCH:
-                    case SpeechRecognizer.ERROR_SPEECH_TIMEOUT: code = "no-speech"; break;
-                    case SpeechRecognizer.ERROR_NETWORK:
-                    case SpeechRecognizer.ERROR_NETWORK_TIMEOUT: code = "network"; break;
-                    default: code = "other-" + error;
-                }
-                speechEvent("error", code);
-            }
-            @Override public void onResults(Bundle results) { speechEvent("final", first(results)); }
-            @Override public void onPartialResults(Bundle partial) {
-                String t = first(partial);
-                if (!t.isEmpty()) speechEvent("partial", t);
-            }
-            @Override public void onEvent(int eventType, Bundle params) {}
-        });
+        ensureRecognizer();
+        recognizer.cancel();
         Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang);
@@ -132,6 +154,9 @@ public class MainActivity extends Activity {
         i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
         i.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
+        // 說完停頓短一點就結束，翻譯比較快出來
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L);
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L);
         recognizer.startListening(i);
     }
 
